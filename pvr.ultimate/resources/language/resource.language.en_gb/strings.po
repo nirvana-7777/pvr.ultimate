@@ -1,0 +1,69 @@
+# Kodi Media Center language file
+# Addon Name: Ultimate PVR Client
+# Addon id: pvr.ultimate
+msgid ""
+msgstr ""
+
+msgctxt "#30000"
+msgid "Backend Configuration"
+msgstr ""
+
+msgctxt "#30001"
+msgid "Connection Settings"
+msgstr ""
+
+msgctxt "#30010"
+msgid "Backend URL"
+msgstr ""
+
+msgctxt "#30011"
+msgid "The hostname or IP address of your backend server"
+msgstr ""
+
+msgctxt "#30012"
+msgid "Backend Port"
+msgstr ""
+
+msgctxt "#30013"
+msgid "The port number of your backend server"
+msgstr ""
+
+msgctxt "#30100"
+msgid "Provider Settings"
+msgstr ""
+
+msgctxt "#30101"
+msgid "Enable/Disable Providers"
+msgstr ""
+
+msgctxt "#30110"
+msgid "Enable Joyn Austria"
+msgstr ""
+
+msgctxt "#30111"
+msgid "Enable or disable channels from Joyn Austria"
+msgstr ""
+
+msgctxt "#30112"
+msgid "Enable Joyn Switzerland"
+msgstr ""
+
+msgctxt "#30113"
+msgid "Enable or disable channels from Joyn Switzerland"
+msgstr ""
+
+msgctxt "#30114"
+msgid "Enable Joyn Germany"
+msgstr ""
+
+msgctxt "#30115"
+msgid "Enable or disable channels from Joyn Germany"
+msgstr ""
+
+msgctxt "#30116"
+msgid "Enable RTL+"
+msgstr ""
+
+msgctxt "#30117"
+msgid "Enable or disable channels from RTL+"
+msgstr ""

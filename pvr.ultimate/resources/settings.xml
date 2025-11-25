@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<settings>
+    <category id="backend" label="30000">
+        <group id="1" label="30001">
+            <setting id="backend_url" type="string" label="30010" help="30011">
+                <level>0</level>
+                <default>localhost</default>
+                <constraints>
+                    <allowempty>false</allowempty>
+                </constraints>
+            </setting>
+            <setting id="backend_port" type="integer" label="30012" help="30013">
+                <level>0</level>
+                <default>7777</default>
+                <constraints>
+                    <minimum>1</minimum>
+                    <maximum>65535</maximum>
+                </constraints>
+            </setting>
+        </group>
+    </category>
+
+    <category id="providers" label="30100">
+        <group id="2" label="30101">
+            <setting id="enable_joyn_at" type="boolean" label="30110" help="30111">
+                <level>0</level>
+                <default>true</default>
+            </setting>
+            <setting id="enable_joyn_ch" type="boolean" label="30112" help="30113">
+                <level>0</level>
+                <default>true</default>
+            </setting>
+            <setting id="enable_joyn_de" type="boolean" label="30114" help="30115">
+                <level>0</level>
+                <default>true</default>
+            </setting>
+            <setting id="enable_rtlplus" type="boolean" label="30116" help="30117">
+                <level>0</level>
+                <default>true</default>
+            </setting>
+        </group>
+    </category>
+</settings>

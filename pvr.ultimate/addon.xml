@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<addon
+  id="pvr.ultimate"
+  version="1.0.0"
+  name="Ultimate PVR Client"
+  provider-name="UltimatePVR">
+  <requires>
+<import addon="kodi.binary.global.main" minversion="2.0.0" version="2.0.2"/>
+<import addon="kodi.binary.global.general" minversion="1.0.4" version="1.0.5"/>
+<import addon="kodi.binary.global.filesystem" minversion="1.1.7" version="1.1.9"/>
+<import addon="inputstream.adaptive" minversion="22.0.0"/>
+<import addon="kodi.binary.instance.pvr" minversion="9.2.0" version="9.2.0"/></requires>
+  <extension
+    point="xbmc.pvrclient"
+    needs_configuration="true"
+    library_linux="pvr.ultimate.so.1.0.0"/>
+  <extension point="xbmc.addon.metadata">
+    <platform></platform>
+    <license>GPL-2.0-or-later</license>
+    <source>https://github.com/yourusername/pvr.ultimate</source>
+    <summary lang="en_GB">Ultimate PVR Client for multiple streaming providers</summary>
+    <description lang="en_GB">PVR client for streaming live TV from multiple providers including Joyn and RTL+. Supports DRM-protected streams via inputstream.adaptive.</description>
+    <disclaimer lang="en_GB">This is an unofficial addon. Use at your own risk.</disclaimer>
+    <assets>
+      <icon>resources/icon.png</icon>
+      <fanart>resources/fanart.jpg</fanart>
+    </assets>
+    <news>
+v1.0.0 (2025-10-30)
+- Initial release
+- Support for multiple providers
+- DRM support via inputstream.adaptive
+- Channel groups per provider
+    </news>
+  </extension>
+</addon>
