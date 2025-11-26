@@ -185,14 +185,18 @@ bool CPVRUltimate::LoadProviders() {
         p.country = provider["country"].asString();
       }
 
+      if (provider.isMember("logo")) {
+        p.logo = provider["logo"].asString();
+      }
+
       p.enabled = IsProviderEnabled(p.name);
       p.uniqueId = GenerateProviderUniqueId(p.name); // Generate once and store
 
       m_providers.push_back(p);
       m_providerIdMap[p.name] = p.uniqueId; // Store in lookup map
 
-      kodi::Log(ADDON_LOG_DEBUG, "Found provider: %s (label: %s, country: %s, enabled: %d, UID: %d)",
-                p.name.c_str(), p.label.c_str(), p.country.c_str(), p.enabled, p.uniqueId);
+      kodi::Log(ADDON_LOG_DEBUG, "Found provider: %s (label: %s, country: %s, logo: %s, enabled: %d, UID: %d)",
+                p.name.c_str(), p.label.c_str(), p.country.c_str(), p.logo.c_str(), p.enabled, p.uniqueId);
     } else if (provider.isString()) {
       // Fallback: handle old string format for backward compatibility
       UltimateProvider p;
@@ -440,7 +444,7 @@ PVR_ERROR CPVRUltimate::GetProviders(kodi::addon::PVRProvidersResultSet& results
       }
 
       kodiProvider.SetType(PVR_PROVIDER_TYPE_IPTV);
-      kodiProvider.SetIconPath("");
+      kodiProvider.SetIconPath(provider.logo);
       kodiProvider.SetUniqueId(provider.uniqueId); // Use stored ID
 
       if (!provider.country.empty()) {

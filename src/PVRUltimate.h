@@ -12,6 +12,7 @@ struct UltimateProvider {
   std::string name;
   std::string label;      // New: Display label for the provider
   std::string country;    // New: Country code
+  std::string logo;
   bool enabled;
   int uniqueId;
 };
