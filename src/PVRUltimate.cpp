@@ -475,7 +475,7 @@ PVR_ERROR CPVRUltimate::GetChannels(bool radio,
       kodiChannel.SetChannelName(channel.channelName);
       kodiChannel.SetIconPath(channel.iconPath);
       kodiChannel.SetIsHidden(false);
-      koidChannel.SetHasArchive(false)
+      kodiChannel.SetHasArchive(false);
 
       // Efficient lookup - no regeneration
       auto it = m_providerIdMap.find(channel.provider);
