@@ -221,7 +221,7 @@ bool CPVRUltimate::LoadProviders() {
 
 bool CPVRUltimate::LoadChannels() {
   m_channels.clear();
-  m_nextChannelNumber = 1;
+  m_nextChannelNumber = 1; // Reset for fallback scenarios
 
   for (const auto& provider : m_providers) {
     if (provider.enabled) {
@@ -230,6 +230,11 @@ bool CPVRUltimate::LoadChannels() {
       }
     }
   }
+
+  // Log final channel numbering summary
+  kodi::Log(ADDON_LOG_INFO, "Final channel load: %d channels with provider offset %s",
+            static_cast<int>(m_channels.size()),
+            (m_providers.size() > 1) ? "applied" : "not applied");
 
   return !m_channels.empty();
 }
@@ -255,6 +260,10 @@ bool CPVRUltimate::LoadChannelsForProvider(const std::string& provider) {
 
   const Json::Value& channels = root["channels"];
 
+  // Determine if we need to add offset (if we have multiple providers)
+  int providerOffset = (m_providers.size() > 1) ? 1000 : 0;
+  kodi::Log(ADDON_LOG_DEBUG, "Provider offset for %s: %d", provider.c_str(), providerOffset);
+
   for (const auto& channelJson : channels) {
     UltimateChannel channel;
 
@@ -264,9 +273,22 @@ bool CPVRUltimate::LoadChannelsForProvider(const std::string& provider) {
     channel.provider = channelJson.get("Provider", provider).asString();
     channel.iconPath = channelJson.get("LogoUrl", "").asString();
 
+    // Use backend-provided channel number with provider offset
+    if (channelJson.isMember("ChannelNumber") && channelJson["ChannelNumber"].isInt()) {
+      int backendChannelNumber = channelJson["ChannelNumber"].asInt();
+      channel.channelNumber = backendChannelNumber + providerOffset;
+
+      // Update next channel number tracker for fallback scenarios
+      if (channel.channelNumber >= m_nextChannelNumber) {
+        m_nextChannelNumber = channel.channelNumber + 1;
+      }
+    } else {
+      // Fallback to auto-increment if no channel number from backend
+      channel.channelNumber = m_nextChannelNumber++;
+    }
+
     // Generate unique ID
     channel.uniqueId = provider + ":" + channel.channelId;
-    channel.channelNumber = m_nextChannelNumber++;
 
     // Stream properties
     channel.mode = channelJson.get("Mode", "live").asString();
@@ -285,13 +307,15 @@ bool CPVRUltimate::LoadChannelsForProvider(const std::string& provider) {
 
     m_channels.push_back(channel);
 
-    kodi::Log(ADDON_LOG_DEBUG, "Loaded channel: %s (ID: %s, Number: %d, Provider: %s)",
-              channel.channelName.c_str(), channel.uniqueId.c_str(),
-              channel.channelNumber, channel.provider.c_str());
+    kodi::Log(ADDON_LOG_DEBUG, "Loaded channel: %s (Backend#: %d, Kodi#: %d, Provider: %s)",
+              channel.channelName.c_str(),
+              channelJson.get("ChannelNumber", 0).asInt(),
+              channel.channelNumber,
+              channel.provider.c_str());
   }
 
-  kodi::Log(ADDON_LOG_INFO, "Loaded %d channels from provider %s",
-            static_cast<int>(channels.size()), provider.c_str());
+  kodi::Log(ADDON_LOG_INFO, "Loaded %d channels from provider %s (offset: %d)",
+            static_cast<int>(channels.size()), provider.c_str(), providerOffset);
 
   return true;
 }
@@ -419,6 +443,10 @@ PVR_ERROR CPVRUltimate::GetProviders(kodi::addon::PVRProvidersResultSet& results
       kodiProvider.SetIconPath("");
       kodiProvider.SetUniqueId(provider.uniqueId); // Use stored ID
 
+      if (!provider.country.empty()) {
+        kodiProvider.SetCountries({provider.country});
+      }
+
       results.Add(kodiProvider);
 
       kodi::Log(ADDON_LOG_DEBUG, "Added provider to results: %s (label: %s, UID: %d)",
@@ -447,6 +475,7 @@ PVR_ERROR CPVRUltimate::GetChannels(bool radio,
       kodiChannel.SetChannelName(channel.channelName);
       kodiChannel.SetIconPath(channel.iconPath);
       kodiChannel.SetIsHidden(false);
+      koidChannel.SetHasArchive(false)
 
       // Efficient lookup - no regeneration
       auto it = m_providerIdMap.find(channel.provider);
