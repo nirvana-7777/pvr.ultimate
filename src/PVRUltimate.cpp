@@ -274,7 +274,7 @@ bool CPVRUltimate::LoadChannelsForProvider(const std::string& provider) {
     // Parse channel data
     channel.channelName = channelJson.get("Name", "").asString();
     channel.channelId = channelJson.get("Id", "").asString();
-    channel.provider = channelJson.get("Provider", provider).asString();
+    channel.provider = provider; // Always use the provider we're loading from
     channel.iconPath = channelJson.get("LogoUrl", "").asString();
 
     // Use backend-provided channel number with provider offset
