@@ -19,25 +19,4 @@
             </setting>
         </group>
     </category>
-
-    <category id="providers" label="30100">
-        <group id="2" label="30101">
-            <setting id="enable_joyn_at" type="boolean" label="30110" help="30111">
-                <level>0</level>
-                <default>true</default>
-            </setting>
-            <setting id="enable_joyn_ch" type="boolean" label="30112" help="30113">
-                <level>0</level>
-                <default>true</default>
-            </setting>
-            <setting id="enable_joyn_de" type="boolean" label="30114" help="30115">
-                <level>0</level>
-                <default>true</default>
-            </setting>
-            <setting id="enable_rtlplus" type="boolean" label="30116" help="30117">
-                <level>0</level>
-                <default>true</default>
-            </setting>
-        </group>
-    </category>
 </settings>
