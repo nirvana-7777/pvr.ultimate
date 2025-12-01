@@ -100,6 +100,9 @@ private:
   bool m_backendAvailable;
   int m_retryCount;
 
+  // Inputstream.adaptive version detection
+  bool m_useModernDrm;
+
   // Retry constants
   static const int MAX_RETRIES = 5;
   static const int RETRY_DELAY_MS = 2000;
@@ -117,9 +120,13 @@ private:
   bool LoadChannels();
   bool LoadChannelsForProvider(const std::string& provider);
   DRMConfig GetDRMConfig(const std::string& provider, const std::string& channelId);
+  Json::Value GetDRMConfigJson(const std::string& provider, const std::string& channelId);
   std::string GetManifestUrl(const std::string& provider, const std::string& channelId);
   bool IsProviderEnabled(const std::string& provider);
   int GenerateProviderUniqueId(const std::string& providerName);
+
+  // Version detection
+  void DetectInputstreamVersion();
 
   // HTTP helpers
   std::string HttpGet(const std::string& url);

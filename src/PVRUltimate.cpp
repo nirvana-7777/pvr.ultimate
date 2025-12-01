@@ -8,6 +8,9 @@
 CPVRUltimate::CPVRUltimate() : m_nextChannelNumber(1), m_backendAvailable(false), m_retryCount(0) {
   kodi::Log(ADDON_LOG_INFO, "Ultimate PVR Client starting...");
 
+  // Detect if we should use modern DRM format (inputstream.adaptive v22+)
+  DetectInputstreamVersion();
+
   // Load backend settings
   m_backendUrl = kodi::addon::GetSettingString("backend_url", "localhost");
   m_backendPort = kodi::addon::GetSettingInt("backend_port", 7777);
@@ -31,6 +34,22 @@ CPVRUltimate::CPVRUltimate() : m_nextChannelNumber(1), m_backendAvailable(false)
 
 CPVRUltimate::~CPVRUltimate() {
   kodi::Log(ADDON_LOG_INFO, "Ultimate PVR Client stopping...");
+}
+
+void CPVRUltimate::DetectInputstreamVersion() {
+  m_useModernDrm = false;
+
+  // Get Kodi version - inputstream.adaptive version matches Kodi version
+  kodi_version_t kodiVersion;
+  kodi::KodiVersion(kodiVersion);
+
+  // inputstream.adaptive v22+ uses the new DRM format
+  m_useModernDrm = (kodiVersion.major >= 22);
+
+  kodi::Log(ADDON_LOG_INFO, "Kodi version: %d.%d.%s, modern DRM (v22+): %s",
+            kodiVersion.major, kodiVersion.minor,
+            kodiVersion.revision.c_str(),
+            m_useModernDrm ? "yes" : "no");
 }
 
 bool CPVRUltimate::RetryBackendCall(const std::string& operationName) {
@@ -349,19 +368,15 @@ DRMConfig CPVRUltimate::GetDRMConfig(const std::string& provider,
     return config;
   }
 
-  if (!root.isMember("drm_configs") || !root["drm_configs"].isArray()) {
-    kodi::Log(ADDON_LOG_ERROR, "Invalid DRM config response format");
-    return config;
-  }
+  // Handle new object format from backend
+  if (root.isMember("drm_configs") && root["drm_configs"].isObject()) {
+    const Json::Value& drmConfigs = root["drm_configs"];
 
-  const Json::Value& drmConfigs = root["drm_configs"];
-
-  if (drmConfigs.size() > 0) {
-    const Json::Value& firstConfig = drmConfigs[0];
-
-    for (const auto& key : firstConfig.getMemberNames()) {
-      config.system = key;
-      const Json::Value& drmData = firstConfig[key];
+    // Get first DRM system from the object
+    if (!drmConfigs.getMemberNames().empty()) {
+      const std::string& firstKey = *drmConfigs.getMemberNames().begin();
+      config.system = firstKey;
+      const Json::Value& drmData = drmConfigs[firstKey];
 
       config.priority = drmData.get("priority", 1).asInt();
 
@@ -377,14 +392,48 @@ DRMConfig CPVRUltimate::GetDRMConfig(const std::string& provider,
         config.license.wrapper = license.get("wrapper", "").asString();
         config.license.unwrapper = license.get("unwrapper", "").asString();
       }
-      break;
     }
+  } else {
+    kodi::Log(ADDON_LOG_ERROR, "Invalid DRM config response format - expected object");
+    return config;
   }
 
   kodi::Log(ADDON_LOG_DEBUG, "Got DRM config: system=%s, license_url=%s",
             config.system.c_str(), config.license.serverUrl.c_str());
 
   return config;
+}
+
+Json::Value CPVRUltimate::GetDRMConfigJson(const std::string& provider,
+                                           const std::string& channelId) {
+  Json::Value drmConfigs(Json::objectValue);
+
+  std::string url = BuildApiUrl("/api/providers/" + provider + "/channels/" +
+                                channelId + "/drm");
+  std::string response = HttpGet(url);
+
+  if (response.empty()) {
+    kodi::Log(ADDON_LOG_DEBUG, "Empty response from DRM endpoint for %s/%s",
+              provider.c_str(), channelId.c_str());
+    return drmConfigs;
+  }
+
+  Json::Value root;
+  if (!ParseJsonResponse(response, root)) {
+    return drmConfigs;
+  }
+
+  if (root.isMember("drm_configs") && root["drm_configs"].isObject()) {
+    // Backend returns object format directly
+    drmConfigs = root["drm_configs"];
+    kodi::Log(ADDON_LOG_DEBUG, "Got DRM config object for %s/%s",
+              provider.c_str(), channelId.c_str());
+  } else {
+    kodi::Log(ADDON_LOG_DEBUG, "No drm_configs object found in response for %s/%s",
+              provider.c_str(), channelId.c_str());
+  }
+
+  return drmConfigs;
 }
 
 // PVR Capability Methods
@@ -568,33 +617,55 @@ PVR_ERROR CPVRUltimate::GetChannelStreamProperties(
   properties.emplace_back(PVR_STREAM_PROPERTY_INPUTSTREAM, "inputstream.adaptive");
   properties.emplace_back(PVR_STREAM_PROPERTY_STREAMURL, manifestUrl);
 
-  // Get DRM configuration if needed and use new drm_legacy property
+  // Get DRM configuration if needed and use new drm property for v22+
   if (ultimateChannel->useCdm) {
-    DRMConfig drmConfig = GetDRMConfig(ultimateChannel->provider,
-                                        ultimateChannel->channelId);
+    if (m_useModernDrm) {
+      // Version 22+: Use new JSON-based DRM config format
+      Json::Value drmConfigs = GetDRMConfigJson(ultimateChannel->provider,
+                                                ultimateChannel->channelId);
 
-    if (!drmConfig.system.empty() && !drmConfig.license.serverUrl.empty()) {
-      // Build drm_legacy property in the new format: [DRM KeySystem]|[License URL]|[Headers]
-      std::string drmLegacyValue = drmConfig.system + "|" + drmConfig.license.serverUrl;
+      if (!drmConfigs.empty()) {
+        // Convert JSON to string
+        Json::StreamWriterBuilder writer;
+        writer["indentation"] = ""; // Compact output
+        std::string drmConfigStr = Json::writeString(writer, drmConfigs);
 
-      // Add license headers if available
-      if (!drmConfig.license.reqHeaders.empty()) {
-        drmLegacyValue += "|" + drmConfig.license.reqHeaders;
+        properties.emplace_back("inputstream.adaptive.drm", drmConfigStr);
+
+        kodi::Log(ADDON_LOG_DEBUG, "Set modern DRM config (%zu bytes) for %s/%s",
+                  drmConfigStr.size(), ultimateChannel->provider.c_str(),
+                  ultimateChannel->channelId.c_str());
+        kodi::Log(ADDON_LOG_DEBUG, "DRM config JSON: %s", drmConfigStr.c_str());
+      } else {
+        kodi::Log(ADDON_LOG_DEBUG, "No DRM configs returned for %s/%s",
+                  ultimateChannel->provider.c_str(), ultimateChannel->channelId.c_str());
       }
+    } else {
+      // Legacy version (<22): Use old drm_legacy format
+      DRMConfig drmConfig = GetDRMConfig(ultimateChannel->provider,
+                                         ultimateChannel->channelId);
 
-      properties.emplace_back("inputstream.adaptive.drm_legacy", drmLegacyValue);
+      if (!drmConfig.system.empty() && !drmConfig.license.serverUrl.empty()) {
+        // Build drm_legacy property in the format: [DRM KeySystem]|[License URL]|[Headers]
+        std::string drmLegacyValue = drmConfig.system + "|" + drmConfig.license.serverUrl;
 
-      kodi::Log(ADDON_LOG_DEBUG, "Set DRM legacy config: %s", drmLegacyValue.c_str());
+        // Add license headers if available
+        if (!drmConfig.license.reqHeaders.empty()) {
+          drmLegacyValue += "|" + drmConfig.license.reqHeaders;
+        }
 
-      // Note: We're not using the old license_type and license_key properties anymore
-    } else if (!drmConfig.system.empty()) {
-      kodi::Log(ADDON_LOG_DEBUG, "DRM system %s configured but no license URL provided",
-                drmConfig.system.c_str());
+        properties.emplace_back("inputstream.adaptive.drm_legacy", drmLegacyValue);
 
-      // Some DRM systems might not need a license URL (like ClearKey with key IDs in manifest)
-      if (drmConfig.system == "org.w3.clearkey") {
-        properties.emplace_back("inputstream.adaptive.drm_legacy", drmConfig.system);
-        kodi::Log(ADDON_LOG_DEBUG, "Set ClearKey DRM without license URL");
+        kodi::Log(ADDON_LOG_DEBUG, "Set legacy DRM config: %s", drmLegacyValue.c_str());
+      } else if (!drmConfig.system.empty()) {
+        kodi::Log(ADDON_LOG_DEBUG, "DRM system %s configured but no license URL provided",
+                  drmConfig.system.c_str());
+
+        // Some DRM systems might not need a license URL
+        if (drmConfig.system == "org.w3.clearkey") {
+          properties.emplace_back("inputstream.adaptive.drm_legacy", drmConfig.system);
+          kodi::Log(ADDON_LOG_DEBUG, "Set ClearKey DRM without license URL");
+        }
       }
     }
   }
