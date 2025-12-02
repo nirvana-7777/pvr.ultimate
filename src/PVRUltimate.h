@@ -2,16 +2,21 @@
 
 #include <kodi/addon-instance/PVR.h>
 #include <kodi/Filesystem.h>
-#include <json/json.h>
 #include <string>
 #include <vector>
 #include <map>
 #include <memory>
 
+// Replace JsonCpp with RapidJSON
+#include "rapidjson/document.h"
+#include "rapidjson/error/en.h"
+#include "rapidjson/stringbuffer.h"
+#include "rapidjson/writer.h"
+
 struct UltimateProvider {
   std::string name;
-  std::string label;      // New: Display label for the provider
-  std::string country;    // New: Country code
+  std::string label;
+  std::string country;
   std::string logo;
   bool enabled;
   int uniqueId;
@@ -111,7 +116,7 @@ private:
   std::vector<UltimateProvider> m_providers;
   std::vector<UltimateChannel> m_channels;
   int m_nextChannelNumber;
-  std::map<std::string, int> m_providerIdMap; // Provider name -> unique ID
+  std::map<std::string, int> m_providerIdMap;
 
   // Helper methods
   bool RetryBackendCall(const std::string& operationName);
@@ -120,7 +125,7 @@ private:
   bool LoadChannels();
   bool LoadChannelsForProvider(const std::string& provider);
   DRMConfig GetDRMConfig(const std::string& provider, const std::string& channelId);
-  Json::Value GetDRMConfigJson(const std::string& provider, const std::string& channelId);
+  rapidjson::Document GetDRMConfigJson(const std::string& provider, const std::string& channelId);
   std::string GetManifestUrl(const std::string& provider, const std::string& channelId);
   bool IsProviderEnabled(const std::string& provider);
   int GenerateProviderUniqueId(const std::string& providerName);
@@ -130,7 +135,7 @@ private:
 
   // HTTP helpers
   std::string HttpGet(const std::string& url);
-  bool ParseJsonResponse(const std::string& response, Json::Value& root);
+  bool ParseJsonResponse(const std::string& response, rapidjson::Document& document);
 
   // URL building
   std::string BuildApiUrl(const std::string& endpoint);

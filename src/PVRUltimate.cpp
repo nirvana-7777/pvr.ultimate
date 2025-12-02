@@ -130,13 +130,12 @@ std::string CPVRUltimate::HttpGet(const std::string& url) {
   return content;
 }
 
-bool CPVRUltimate::ParseJsonResponse(const std::string& response, Json::Value& root) {
-  Json::CharReaderBuilder builder;
-  std::string errs;
-  std::istringstream stream(response);
+bool CPVRUltimate::ParseJsonResponse(const std::string& response, rapidjson::Document& document) {
+  rapidjson::ParseResult result = document.Parse(response.c_str());
 
-  if (!Json::parseFromStream(builder, stream, &root, &errs)) {
-    kodi::Log(ADDON_LOG_ERROR, "JSON parse error: %s", errs.c_str());
+  if (result.IsError()) {
+    kodi::Log(ADDON_LOG_ERROR, "JSON parse error: %s (Offset: %zu)",
+              rapidjson::GetParseError_En(result.Code()), result.Offset());
     return false;
   }
 
@@ -170,57 +169,58 @@ bool CPVRUltimate::LoadProviders() {
     return false;
   }
 
-  Json::Value root;
-  if (!ParseJsonResponse(response, root)) {
+  rapidjson::Document document;
+  if (!ParseJsonResponse(response, document)) {
     return false;
   }
 
-  if (!root.isMember("providers") || !root["providers"].isArray()) {
+  if (!document.HasMember("providers") || !document["providers"].IsArray()) {
     kodi::Log(ADDON_LOG_ERROR, "Invalid providers response format");
     return false;
   }
 
   m_providers.clear();
-  m_providerIdMap.clear(); // Clear the lookup map
+  m_providerIdMap.clear();
 
-  const Json::Value& providers = root["providers"];
+  const rapidjson::Value& providers = document["providers"];
 
-  for (const auto& provider : providers) {
-    if (provider.isObject() && provider.isMember("name")) {
+  for (const auto& provider : providers.GetArray()) {
+    if (provider.IsObject() && provider.HasMember("name")) {
       UltimateProvider p;
 
-      // Extract provider data from the new object format
-      p.name = provider.get("name", "").asString();
+      // Extract provider data
+      p.name = provider["name"].GetString();
 
       // Use label if available, otherwise fall back to name
-      if (provider.isMember("label") && !provider["label"].asString().empty()) {
-        p.label = provider["label"].asString();
+      if (provider.HasMember("label") && provider["label"].IsString() &&
+          strlen(provider["label"].GetString()) > 0) {
+        p.label = provider["label"].GetString();
       } else {
         p.label = p.name;
       }
 
       // Store country information if available
-      if (provider.isMember("country")) {
-        p.country = provider["country"].asString();
+      if (provider.HasMember("country") && provider["country"].IsString()) {
+        p.country = provider["country"].GetString();
       }
 
-      if (provider.isMember("logo")) {
-        p.logo = provider["logo"].asString();
+      if (provider.HasMember("logo") && provider["logo"].IsString()) {
+        p.logo = provider["logo"].GetString();
       }
 
       p.enabled = IsProviderEnabled(p.name);
-      p.uniqueId = GenerateProviderUniqueId(p.name); // Generate once and store
+      p.uniqueId = GenerateProviderUniqueId(p.name);
 
       m_providers.push_back(p);
-      m_providerIdMap[p.name] = p.uniqueId; // Store in lookup map
+      m_providerIdMap[p.name] = p.uniqueId;
 
       kodi::Log(ADDON_LOG_DEBUG, "Found provider: %s (label: %s, country: %s, logo: %s, enabled: %d, UID: %d)",
                 p.name.c_str(), p.label.c_str(), p.country.c_str(), p.logo.c_str(), p.enabled, p.uniqueId);
-    } else if (provider.isString()) {
-      // Fallback: handle old string format for backward compatibility
+    } else if (provider.IsString()) {
+      // Fallback: handle old string format
       UltimateProvider p;
-      p.name = provider.asString();
-      p.label = p.name; // Use name as label
+      p.name = provider.GetString();
+      p.label = p.name;
       p.enabled = IsProviderEnabled(p.name);
       p.uniqueId = GenerateProviderUniqueId(p.name);
 
@@ -233,9 +233,9 @@ bool CPVRUltimate::LoadProviders() {
   }
 
   // Log default country if available
-  if (root.isMember("default_country")) {
+  if (document.HasMember("default_country") && document["default_country"].IsString()) {
     kodi::Log(ADDON_LOG_DEBUG, "Default country from backend: %s",
-              root["default_country"].asString().c_str());
+              document["default_country"].GetString());
   }
 
   kodi::Log(ADDON_LOG_INFO, "Loaded %d providers", static_cast<int>(m_providers.size()));
@@ -244,7 +244,7 @@ bool CPVRUltimate::LoadProviders() {
 
 bool CPVRUltimate::LoadChannels() {
   m_channels.clear();
-  m_nextChannelNumber = 1; // Reset for fallback scenarios
+  m_nextChannelNumber = 1;
 
   for (const auto& provider : m_providers) {
     if (provider.enabled) {
@@ -254,7 +254,6 @@ bool CPVRUltimate::LoadChannels() {
     }
   }
 
-  // Log final channel numbering summary
   kodi::Log(ADDON_LOG_INFO, "Final channel load: %d channels with provider offset %s",
             static_cast<int>(m_channels.size()),
             (m_providers.size() > 1) ? "applied" : "not applied");
@@ -271,34 +270,43 @@ bool CPVRUltimate::LoadChannelsForProvider(const std::string& provider) {
     return false;
   }
 
-  Json::Value root;
-  if (!ParseJsonResponse(response, root)) {
+  rapidjson::Document document;
+  if (!ParseJsonResponse(response, document)) {
     return false;
   }
 
-  if (!root.isMember("channels") || !root["channels"].isArray()) {
+  if (!document.HasMember("channels") || !document["channels"].IsArray()) {
     kodi::Log(ADDON_LOG_ERROR, "Invalid channels response format for %s", provider.c_str());
     return false;
   }
 
-  const Json::Value& channels = root["channels"];
+  const rapidjson::Value& channels = document["channels"];
 
   // Determine if we need to add offset (if we have multiple providers)
   int providerOffset = (m_providers.size() > 1) ? 1000 : 0;
   kodi::Log(ADDON_LOG_DEBUG, "Provider offset for %s: %d", provider.c_str(), providerOffset);
 
-  for (const auto& channelJson : channels) {
+  for (const auto& channelJson : channels.GetArray()) {
     UltimateChannel channel;
 
     // Parse channel data
-    channel.channelName = channelJson.get("Name", "").asString();
-    channel.channelId = channelJson.get("Id", "").asString();
-    channel.provider = provider; // Always use the provider we're loading from
-    channel.iconPath = channelJson.get("LogoUrl", "").asString();
+    if (channelJson.HasMember("Name") && channelJson["Name"].IsString()) {
+      channel.channelName = channelJson["Name"].GetString();
+    }
+
+    if (channelJson.HasMember("Id") && channelJson["Id"].IsString()) {
+      channel.channelId = channelJson["Id"].GetString();
+    }
+
+    channel.provider = provider;
+
+    if (channelJson.HasMember("LogoUrl") && channelJson["LogoUrl"].IsString()) {
+      channel.iconPath = channelJson["LogoUrl"].GetString();
+    }
 
     // Use backend-provided channel number with provider offset
-    if (channelJson.isMember("ChannelNumber") && channelJson["ChannelNumber"].isInt()) {
-      int backendChannelNumber = channelJson["ChannelNumber"].asInt();
+    if (channelJson.HasMember("ChannelNumber") && channelJson["ChannelNumber"].IsInt()) {
+      int backendChannelNumber = channelJson["ChannelNumber"].GetInt();
       channel.channelNumber = backendChannelNumber + providerOffset;
 
       // Update next channel number tracker for fallback scenarios
@@ -314,16 +322,57 @@ bool CPVRUltimate::LoadChannelsForProvider(const std::string& provider) {
     channel.uniqueId = provider + ":" + channel.channelId;
 
     // Stream properties
-    channel.mode = channelJson.get("Mode", "live").asString();
-    channel.sessionManifest = channelJson.get("SessionManifest", false).asBool();
-    channel.manifest = channelJson.get("Manifest", "").asString();
-    channel.manifestScript = channelJson.get("ManifestScript", "").asString();
-    channel.useCdm = channelJson.get("UseCdm", true).asBool();
-    channel.cdmMode = channelJson.get("CdmMode", "external").asString();
-    channel.contentType = channelJson.get("ContentType", "LIVE").asString();
-    channel.country = channelJson.get("Country", "").asString();
-    channel.language = channelJson.get("Language", "de").asString();
-    channel.streamingFormat = channelJson.get("StreamingFormat", "").asString();
+    if (channelJson.HasMember("Mode") && channelJson["Mode"].IsString()) {
+      channel.mode = channelJson["Mode"].GetString();
+    } else {
+      channel.mode = "live";
+    }
+
+    if (channelJson.HasMember("SessionManifest") && channelJson["SessionManifest"].IsBool()) {
+      channel.sessionManifest = channelJson["SessionManifest"].GetBool();
+    } else {
+      channel.sessionManifest = false;
+    }
+
+    if (channelJson.HasMember("Manifest") && channelJson["Manifest"].IsString()) {
+      channel.manifest = channelJson["Manifest"].GetString();
+    }
+
+    if (channelJson.HasMember("ManifestScript") && channelJson["ManifestScript"].IsString()) {
+      channel.manifestScript = channelJson["ManifestScript"].GetString();
+    }
+
+    if (channelJson.HasMember("UseCdm") && channelJson["UseCdm"].IsBool()) {
+      channel.useCdm = channelJson["UseCdm"].GetBool();
+    } else {
+      channel.useCdm = true;
+    }
+
+    if (channelJson.HasMember("CdmMode") && channelJson["CdmMode"].IsString()) {
+      channel.cdmMode = channelJson["CdmMode"].GetString();
+    } else {
+      channel.cdmMode = "external";
+    }
+
+    if (channelJson.HasMember("ContentType") && channelJson["ContentType"].IsString()) {
+      channel.contentType = channelJson["ContentType"].GetString();
+    } else {
+      channel.contentType = "LIVE";
+    }
+
+    if (channelJson.HasMember("Country") && channelJson["Country"].IsString()) {
+      channel.country = channelJson["Country"].GetString();
+    }
+
+    if (channelJson.HasMember("Language") && channelJson["Language"].IsString()) {
+      channel.language = channelJson["Language"].GetString();
+    } else {
+      channel.language = "de";
+    }
+
+    if (channelJson.HasMember("StreamingFormat") && channelJson["StreamingFormat"].IsString()) {
+      channel.streamingFormat = channelJson["StreamingFormat"].GetString();
+    }
 
     // Assume TV channels (not radio)
     channel.isRadio = false;
@@ -332,13 +381,14 @@ bool CPVRUltimate::LoadChannelsForProvider(const std::string& provider) {
 
     kodi::Log(ADDON_LOG_DEBUG, "Loaded channel: %s (Backend#: %d, Kodi#: %d, Provider: %s)",
               channel.channelName.c_str(),
-              channelJson.get("ChannelNumber", 0).asInt(),
+              channelJson.HasMember("ChannelNumber") && channelJson["ChannelNumber"].IsInt() ?
+                channelJson["ChannelNumber"].GetInt() : 0,
               channel.channelNumber,
               channel.provider.c_str());
   }
 
   kodi::Log(ADDON_LOG_INFO, "Loaded %d channels from provider %s (offset: %d)",
-            static_cast<int>(channels.size()), provider.c_str(), providerOffset);
+            static_cast<int>(channels.Size()), provider.c_str(), providerOffset);
 
   return true;
 }
@@ -363,35 +413,67 @@ DRMConfig CPVRUltimate::GetDRMConfig(const std::string& provider,
     return config;
   }
 
-  Json::Value root;
-  if (!ParseJsonResponse(response, root)) {
+  rapidjson::Document document;
+  if (!ParseJsonResponse(response, document)) {
     return config;
   }
 
   // Handle new object format from backend
-  if (root.isMember("drm_configs") && root["drm_configs"].isObject()) {
-    const Json::Value& drmConfigs = root["drm_configs"];
+  if (document.HasMember("drm_configs") && document["drm_configs"].IsObject()) {
+    const rapidjson::Value& drmConfigs = document["drm_configs"];
 
     // Get first DRM system from the object
-    if (!drmConfigs.getMemberNames().empty()) {
-      const std::string& firstKey = *drmConfigs.getMemberNames().begin();
+    for (auto it = drmConfigs.MemberBegin(); it != drmConfigs.MemberEnd(); ++it) {
+      const std::string firstKey = it->name.GetString();
       config.system = firstKey;
-      const Json::Value& drmData = drmConfigs[firstKey];
 
-      config.priority = drmData.get("priority", 1).asInt();
+      const rapidjson::Value& drmData = it->value;
 
-      if (drmData.isMember("license")) {
-        const Json::Value& license = drmData["license"];
-
-        config.license.serverUrl = license.get("server_url", "").asString();
-        config.license.serverCertificate = license.get("server_certificate", "").asString();
-        config.license.reqHeaders = license.get("req_headers", "").asString();
-        config.license.reqData = license.get("req_data", "").asString();
-        config.license.reqParams = license.get("req_params", "").asString();
-        config.license.useHttpGetRequest = license.get("use_http_get_request", false).asBool();
-        config.license.wrapper = license.get("wrapper", "").asString();
-        config.license.unwrapper = license.get("unwrapper", "").asString();
+      if (drmData.HasMember("priority") && drmData["priority"].IsInt()) {
+        config.priority = drmData["priority"].GetInt();
+      } else {
+        config.priority = 1;
       }
+
+      if (drmData.HasMember("license") && drmData["license"].IsObject()) {
+        const rapidjson::Value& license = drmData["license"];
+
+        if (license.HasMember("server_url") && license["server_url"].IsString()) {
+          config.license.serverUrl = license["server_url"].GetString();
+        }
+
+        if (license.HasMember("server_certificate") && license["server_certificate"].IsString()) {
+          config.license.serverCertificate = license["server_certificate"].GetString();
+        }
+
+        if (license.HasMember("req_headers") && license["req_headers"].IsString()) {
+          config.license.reqHeaders = license["req_headers"].GetString();
+        }
+
+        if (license.HasMember("req_data") && license["req_data"].IsString()) {
+          config.license.reqData = license["req_data"].GetString();
+        }
+
+        if (license.HasMember("req_params") && license["req_params"].IsString()) {
+          config.license.reqParams = license["req_params"].GetString();
+        }
+
+        if (license.HasMember("use_http_get_request") && license["use_http_get_request"].IsBool()) {
+          config.license.useHttpGetRequest = license["use_http_get_request"].GetBool();
+        } else {
+          config.license.useHttpGetRequest = false;
+        }
+
+        if (license.HasMember("wrapper") && license["wrapper"].IsString()) {
+          config.license.wrapper = license["wrapper"].GetString();
+        }
+
+        if (license.HasMember("unwrapper") && license["unwrapper"].IsString()) {
+          config.license.unwrapper = license["unwrapper"].GetString();
+        }
+      }
+
+      break; // Only process the first DRM system
     }
   } else {
     kodi::Log(ADDON_LOG_ERROR, "Invalid DRM config response format - expected object");
@@ -404,9 +486,9 @@ DRMConfig CPVRUltimate::GetDRMConfig(const std::string& provider,
   return config;
 }
 
-Json::Value CPVRUltimate::GetDRMConfigJson(const std::string& provider,
-                                           const std::string& channelId) {
-  Json::Value drmConfigs(Json::objectValue);
+rapidjson::Document CPVRUltimate::GetDRMConfigJson(const std::string& provider,
+                                                   const std::string& channelId) {
+  rapidjson::Document drmConfigs(rapidjson::kObjectType);
 
   std::string url = BuildApiUrl("/api/providers/" + provider + "/channels/" +
                                 channelId + "/drm");
@@ -418,14 +500,13 @@ Json::Value CPVRUltimate::GetDRMConfigJson(const std::string& provider,
     return drmConfigs;
   }
 
-  Json::Value root;
-  if (!ParseJsonResponse(response, root)) {
+  rapidjson::Document document;
+  if (!ParseJsonResponse(response, document)) {
     return drmConfigs;
   }
 
-  if (root.isMember("drm_configs") && root["drm_configs"].isObject()) {
-    // Backend returns object format directly
-    drmConfigs = root["drm_configs"];
+  if (document.HasMember("drm_configs") && document["drm_configs"].IsObject()) {
+    drmConfigs.CopyFrom(document["drm_configs"], drmConfigs.GetAllocator());
     kodi::Log(ADDON_LOG_DEBUG, "Got DRM config object for %s/%s",
               provider.c_str(), channelId.c_str());
   } else {
@@ -494,7 +575,7 @@ PVR_ERROR CPVRUltimate::GetProviders(kodi::addon::PVRProvidersResultSet& results
 
       kodiProvider.SetType(PVR_PROVIDER_TYPE_IPTV);
       kodiProvider.SetIconPath(provider.logo);
-      kodiProvider.SetUniqueId(provider.uniqueId); // Use stored ID
+      kodiProvider.SetUniqueId(provider.uniqueId);
 
       if (!provider.country.empty()) {
         kodiProvider.SetCountries({provider.country});
@@ -515,7 +596,6 @@ PVR_ERROR CPVRUltimate::GetChannelsAmount(int& amount) {
   return PVR_ERROR_NO_ERROR;
 }
 
-// Channel Methods
 PVR_ERROR CPVRUltimate::GetChannels(bool radio,
                                      kodi::addon::PVRChannelsResultSet& results) {
   for (const auto& channel : m_channels) {
@@ -530,7 +610,7 @@ PVR_ERROR CPVRUltimate::GetChannels(bool radio,
       kodiChannel.SetIsHidden(false);
       kodiChannel.SetHasArchive(false);
 
-      // Efficient lookup - no regeneration
+      // Efficient lookup
       auto it = m_providerIdMap.find(channel.provider);
       if (it != m_providerIdMap.end()) {
         kodiChannel.SetClientProviderUid(it->second);
@@ -586,22 +666,23 @@ PVR_ERROR CPVRUltimate::GetChannelStreamProperties(
   }
 
   // Parse JSON response to extract manifest_url
-  Json::Value root;
-  if (!ParseJsonResponse(response, root)) {
+  rapidjson::Document document;
+  if (!ParseJsonResponse(response, document)) {
     kodi::Log(ADDON_LOG_ERROR, "Failed to parse manifest API response");
     return PVR_ERROR_SERVER_ERROR;
   }
 
   // Check if we have an error response
-  if (root.isMember("error")) {
-    kodi::Log(ADDON_LOG_ERROR, "Manifest API returned error: %s", root["error"].asString().c_str());
+  if (document.HasMember("error") && document["error"].IsString()) {
+    kodi::Log(ADDON_LOG_ERROR, "Manifest API returned error: %s",
+              document["error"].GetString());
     return PVR_ERROR_SERVER_ERROR;
   }
 
   // Extract the actual manifest URL from JSON
   std::string manifestUrl;
-  if (root.isMember("manifest_url")) {
-    manifestUrl = root["manifest_url"].asString();
+  if (document.HasMember("manifest_url") && document["manifest_url"].IsString()) {
+    manifestUrl = document["manifest_url"].GetString();
     kodi::Log(ADDON_LOG_INFO, "Extracted manifest URL: %s", manifestUrl.c_str());
   } else {
     kodi::Log(ADDON_LOG_ERROR, "No manifest_url in API response");
@@ -609,33 +690,36 @@ PVR_ERROR CPVRUltimate::GetChannelStreamProperties(
   }
 
   // Log additional info from response
-  kodi::Log(ADDON_LOG_DEBUG, "Manifest API response - provider: %s, channel_id: %s",
-            root.get("provider", "").asString().c_str(),
-            root.get("channel_id", "").asString().c_str());
+  if (document.HasMember("provider") && document["provider"].IsString() &&
+      document.HasMember("channel_id") && document["channel_id"].IsString()) {
+    kodi::Log(ADDON_LOG_DEBUG, "Manifest API response - provider: %s, channel_id: %s",
+              document["provider"].GetString(),
+              document["channel_id"].GetString());
+  }
 
-  // Set up inputstream.adaptive - no need to set manifest_type (auto-detected)
+  // Set up inputstream.adaptive
   properties.emplace_back(PVR_STREAM_PROPERTY_INPUTSTREAM, "inputstream.adaptive");
   properties.emplace_back(PVR_STREAM_PROPERTY_STREAMURL, manifestUrl);
 
-  // Get DRM configuration if needed and use new drm property for v22+
+  // Get DRM configuration if needed
   if (ultimateChannel->useCdm) {
     if (m_useModernDrm) {
       // Version 22+: Use new JSON-based DRM config format
-      Json::Value drmConfigs = GetDRMConfigJson(ultimateChannel->provider,
-                                                ultimateChannel->channelId);
+      rapidjson::Document drmConfigs = GetDRMConfigJson(ultimateChannel->provider,
+                                                        ultimateChannel->channelId);
 
-      if (!drmConfigs.empty()) {
+      if (!drmConfigs.ObjectEmpty()) {
         // Convert JSON to string
-        Json::StreamWriterBuilder writer;
-        writer["indentation"] = ""; // Compact output
-        std::string drmConfigStr = Json::writeString(writer, drmConfigs);
+        rapidjson::StringBuffer buffer;
+        rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
+        drmConfigs.Accept(writer);
 
+        std::string drmConfigStr = buffer.GetString();
         properties.emplace_back("inputstream.adaptive.drm", drmConfigStr);
 
         kodi::Log(ADDON_LOG_DEBUG, "Set modern DRM config (%zu bytes) for %s/%s",
                   drmConfigStr.size(), ultimateChannel->provider.c_str(),
                   ultimateChannel->channelId.c_str());
-        kodi::Log(ADDON_LOG_DEBUG, "DRM config JSON: %s", drmConfigStr.c_str());
       } else {
         kodi::Log(ADDON_LOG_DEBUG, "No DRM configs returned for %s/%s",
                   ultimateChannel->provider.c_str(), ultimateChannel->channelId.c_str());
@@ -673,7 +757,7 @@ PVR_ERROR CPVRUltimate::GetChannelStreamProperties(
   return PVR_ERROR_NO_ERROR;
 }
 
-// Channel Group Methods - Keep minimal for backward compatibility
+// Channel Group Methods
 PVR_ERROR CPVRUltimate::GetChannelGroupsAmount(int& amount) {
   amount = 1; // Just "All Channels" group
   return PVR_ERROR_NO_ERROR;
@@ -686,7 +770,6 @@ PVR_ERROR CPVRUltimate::GetChannelGroups(bool radio,
   }
 
   // Just provide "All Channels" group
-  // Providers are now handled through native provider support
   kodi::addon::PVRChannelGroup allGroup;
   allGroup.SetIsRadio(false);
   allGroup.SetGroupName("All Channels");
