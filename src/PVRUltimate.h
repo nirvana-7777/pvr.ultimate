@@ -98,6 +98,14 @@ public:
   // Signal status (for debugging)
   PVR_ERROR GetSignalStatus(int channelUid, kodi::addon::PVRSignalStatus& signalStatus) override;
 
+  // EPG methods
+  PVR_ERROR GetEPGForChannel(int channelUid, time_t start, time_t end,
+                            kodi::addon::PVREPGTagsResultSet& results) override;
+  PVR_ERROR IsEPGTagRecordable(const kodi::addon::PVREPGTag& tag, bool& bIsRecordable) override;
+  PVR_ERROR IsEPGTagPlayable(const kodi::addon::PVREPGTag& tag, bool& bIsPlayable) override;
+  PVR_ERROR GetEPGTagStreamProperties(const kodi::addon::PVREPGTag& tag,
+                                     std::vector<kodi::addon::PVRStreamProperty>& properties) override;
+
 private:
   // Configuration
   std::string m_backendUrl;

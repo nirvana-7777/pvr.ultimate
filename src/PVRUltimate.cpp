@@ -1,6 +1,7 @@
 #include "PVRUltimate.h"
 #include <kodi/General.h>
 #include <sstream>
+#include <ctime>
 #include <algorithm>
 #include <thread>
 #include <chrono>
@@ -519,7 +520,7 @@ rapidjson::Document CPVRUltimate::GetDRMConfigJson(const std::string& provider,
 
 // PVR Capability Methods
 PVR_ERROR CPVRUltimate::GetCapabilities(kodi::addon::PVRCapabilities& capabilities) {
-  capabilities.SetSupportsEPG(false);
+  capabilities.SetSupportsEPG(true);
   capabilities.SetSupportsTV(true);
   capabilities.SetSupportsRadio(false);
   capabilities.SetSupportsRecordings(false);
@@ -797,6 +798,222 @@ PVR_ERROR CPVRUltimate::GetChannelGroupMembers(
   }
 
   return PVR_ERROR_NO_ERROR;
+}
+
+PVR_ERROR CPVRUltimate::GetEPGForChannel(int channelUid, time_t start, time_t end,
+                                         kodi::addon::PVREPGTagsResultSet& results) {
+  // Find the channel
+  UltimateChannel* ultimateChannel = nullptr;
+  for (auto& ch : m_channels) {
+    if (ch.channelNumber == channelUid) {
+      ultimateChannel = &ch;
+      break;
+    }
+  }
+
+  if (!ultimateChannel) {
+    kodi::Log(ADDON_LOG_DEBUG, "Channel not found for EPG: %d", channelUid);
+    return PVR_ERROR_NO_ERROR;
+  }
+
+  kodi::Log(ADDON_LOG_DEBUG, "Fetching EPG for %s (%s) from %ld to %ld",
+            ultimateChannel->channelName.c_str(), ultimateChannel->provider.c_str(),
+            start, end);
+
+  // Build URL for EPG API
+  std::ostringstream url;
+  url << BuildApiUrl("/api/providers/") << ultimateChannel->provider
+      << "/channels/" << ultimateChannel->channelId << "/epg"
+      << "?start_time=" << start << "&end_time=" << end;
+
+  // Add country if available
+  if (!ultimateChannel->country.empty()) {
+    url << "&country=" << ultimateChannel->country;
+  }
+
+  std::string response = HttpGet(url.str());
+  if (response.empty()) {
+    kodi::Log(ADDON_LOG_DEBUG, "No EPG data returned for channel %d", channelUid);
+    return PVR_ERROR_NO_ERROR;
+  }
+
+  rapidjson::Document document;
+  if (!ParseJsonResponse(response, document)) {
+    kodi::Log(ADDON_LOG_ERROR, "Failed to parse EPG JSON for channel %d", channelUid);
+    return PVR_ERROR_NO_ERROR;
+  }
+
+  // Check for error response
+  if (document.HasMember("error") && document["error"].IsString()) {
+    kodi::Log(ADDON_LOG_WARNING, "EPG API error: %s", document["error"].GetString());
+    return PVR_ERROR_NO_ERROR;
+  }
+
+  // Parse EPG data
+  if (document.HasMember("epg") && document["epg"].IsArray()) {
+    const rapidjson::Value& epgArray = document["epg"];
+
+    for (const auto& epgItem : epgArray.GetArray()) {
+      kodi::addon::PVREPGTag tag;
+
+      // REQUIRED: Unique broadcast ID
+      std::string uniqueId = std::to_string(channelUid) + "_" +
+                            std::to_string(epgItem["start"].GetUint64()) + "_" +
+                            std::to_string(epgItem["end"].GetUint64());
+      tag.SetUniqueBroadcastId(std::hash<std::string>{}(uniqueId));
+
+      // REQUIRED: Channel ID
+      tag.SetUniqueChannelId(channelUid);
+
+      // REQUIRED: Title
+      if (epgItem.HasMember("title") && epgItem["title"].IsString()) {
+        tag.SetTitle(epgItem["title"].GetString());
+      } else {
+        tag.SetTitle("Unknown"); // Required field, can't be empty
+      }
+
+      // REQUIRED: Start time
+      if (epgItem.HasMember("start") && epgItem["start"].IsUint64()) {
+        tag.SetStartTime(epgItem["start"].GetUint64());
+      } else {
+        tag.SetStartTime(0); // Fallback
+      }
+
+      // REQUIRED: End time
+      if (epgItem.HasMember("end") && epgItem["end"].IsUint64()) {
+        tag.SetEndTime(epgItem["end"].GetUint64());
+      } else {
+        tag.SetEndTime(0); // Fallback
+      }
+
+      // OPTIONAL: Plot outline
+      if (epgItem.HasMember("plot") && epgItem["plot"].IsString()) {
+        tag.SetPlotOutline(epgItem["plot"].GetString());
+      }
+
+      // OPTIONAL: Plot/description
+      if (epgItem.HasMember("description") && epgItem["description"].IsString()) {
+        tag.SetPlot(epgItem["description"].GetString());
+      }
+
+      // OPTIONAL: Icon
+      if (epgItem.HasMember("icon") && epgItem["icon"].IsString()) {
+        tag.SetIconPath(epgItem["icon"].GetString());
+      }
+
+      // OPTIONAL: Genre
+      if (epgItem.HasMember("genre") && epgItem["genre"].IsInt()) {
+        tag.SetGenreType(epgItem["genre"].GetInt());
+      }
+
+      // OPTIONAL: Parental rating
+      if (epgItem.HasMember("parental_rating") && epgItem["parental_rating"].IsInt()) {
+        tag.SetParentalRating(epgItem["parental_rating"].GetInt());
+      }
+
+      // OPTIONAL: Episode info
+      if (epgItem.HasMember("episode_number") && epgItem["episode_number"].IsInt()) {
+        tag.SetEpisodeNumber(epgItem["episode_number"].GetInt());
+      }
+
+      if (epgItem.HasMember("season_number") && epgItem["season_number"].IsInt()) {
+        tag.SetSeriesNumber(epgItem["season_number"].GetInt());
+      }
+
+      if (epgItem.HasMember("episode_name") && epgItem["episode_name"].IsString()) {
+        tag.SetEpisodeName(epgItem["episode_name"].GetString());
+      }
+
+      // OPTIONAL: Cast - join vector into comma-separated string
+      if (epgItem.HasMember("cast") && epgItem["cast"].IsArray()) {
+        std::string castStr;
+        for (const auto& actor : epgItem["cast"].GetArray()) {
+          if (actor.IsString()) {
+            if (!castStr.empty()) castStr += ", ";
+            castStr += actor.GetString();
+          }
+        }
+        if (!castStr.empty()) {
+          tag.SetCast(castStr);
+        }
+      }
+
+      // OPTIONAL: Directors - join vector into comma-separated string
+      if (epgItem.HasMember("directors") && epgItem["directors"].IsArray()) {
+        std::string directorsStr;
+        for (const auto& director : epgItem["directors"].GetArray()) {
+          if (director.IsString()) {
+            if (!directorsStr.empty()) directorsStr += ", ";
+            directorsStr += director.GetString();
+          }
+        }
+        if (!directorsStr.empty()) {
+          tag.SetDirector(directorsStr);
+        }
+      }
+
+      // OPTIONAL: Writers - join vector into comma-separated string
+      if (epgItem.HasMember("writers") && epgItem["writers"].IsArray()) {
+        std::string writersStr;
+        for (const auto& writer : epgItem["writers"].GetArray()) {
+          if (writer.IsString()) {
+            if (!writersStr.empty()) writersStr += ", ";
+            writersStr += writer.GetString();
+          }
+        }
+        if (!writersStr.empty()) {
+          tag.SetWriter(writersStr);
+        }
+      }
+
+      // OPTIONAL: Year
+      if (epgItem.HasMember("year") && epgItem["year"].IsInt()) {
+        tag.SetYear(epgItem["year"].GetInt());
+      }
+
+      // OPTIONAL: First aired - convert time_t to string if needed
+      if (epgItem.HasMember("first_aired") && epgItem["first_aired"].IsUint64()) {
+        // Convert time_t to string format (YYYY-MM-DD)
+        time_t firstAiredTime = epgItem["first_aired"].GetUint64();
+        struct tm *timeinfo = localtime(&firstAiredTime);
+        char buffer[11];
+        strftime(buffer, sizeof(buffer), "%Y-%m-%d", timeinfo);
+        tag.SetFirstAired(buffer);
+      }
+
+      results.Add(tag);
+    }
+
+    kodi::Log(ADDON_LOG_DEBUG, "Added %zu EPG entries for channel %d",
+              epgArray.Size(), channelUid);
+  }
+
+  return PVR_ERROR_NO_ERROR;
+}
+
+PVR_ERROR CPVRUltimate::IsEPGTagRecordable(const kodi::addon::PVREPGTag& tag, bool& bIsRecordable) {
+  // For now, assume EPG tags are not recordable
+  bIsRecordable = false;
+  return PVR_ERROR_NO_ERROR;
+}
+
+PVR_ERROR CPVRUltimate::IsEPGTagPlayable(const kodi::addon::PVREPGTag& tag, bool& bIsPlayable) {
+  // For most IPTV services, EPG tags are informational only, not directly playable
+  // Future events cannot be played, and current events usually can't be restarted
+  // unless the provider offers catch-up/restart functionality
+
+  bIsPlayable = false;
+  return PVR_ERROR_NO_ERROR;
+}
+
+PVR_ERROR CPVRUltimate::GetEPGTagStreamProperties(const kodi::addon::PVREPGTag& tag,
+                                                  std::vector<kodi::addon::PVRStreamProperty>& properties) {
+  // If you implement catch-up functionality later:
+  // 1. Find the channel
+  // 2. Build a manifest URL with time range (start_time=tag.GetStartTime())
+  // 3. Set stream properties similar to GetChannelStreamProperties()
+
+  return PVR_ERROR_NOT_IMPLEMENTED; // For now
 }
 
 PVR_ERROR CPVRUltimate::GetSignalStatus(int channelUid,
