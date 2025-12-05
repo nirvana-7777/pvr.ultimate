@@ -287,6 +287,9 @@ bool CPVRUltimate::LoadChannelsForProvider(const std::string& provider) {
   int providerOffset = (m_providers.size() > 1) ? 1000 : 0;
   kodi::Log(ADDON_LOG_DEBUG, "Provider offset for %s: %d", provider.c_str(), providerOffset);
 
+  int radioCount = 0;
+  int tvCount = 0;
+
   for (const auto& channelJson : channels.GetArray()) {
     UltimateChannel channel;
 
@@ -375,21 +378,43 @@ bool CPVRUltimate::LoadChannelsForProvider(const std::string& provider) {
       channel.streamingFormat = channelJson["StreamingFormat"].GetString();
     }
 
-    // Assume TV channels (not radio)
-    channel.isRadio = false;
+    // ==================================================================
+    // SIMPLE RADIO CHANNEL DETECTION
+    // ==================================================================
+
+    // Primary detection: IsRadio boolean field
+    if (channelJson.HasMember("IsRadio") && channelJson["IsRadio"].IsBool()) {
+      channel.isRadio = channelJson["IsRadio"].GetBool();
+    }
+    // Fallback: Check ContentType
+    else if (channelJson.HasMember("ContentType") && channelJson["ContentType"].IsString()) {
+      std::string contentType = channelJson["ContentType"].GetString();
+      channel.isRadio = (contentType == "RADIO");
+    }
+    // Default: TV channel
+    else {
+      channel.isRadio = false;
+    }
+
+    if (channel.isRadio) {
+      radioCount++;
+    } else {
+      tvCount++;
+    }
 
     m_channels.push_back(channel);
 
-    kodi::Log(ADDON_LOG_DEBUG, "Loaded channel: %s (Backend#: %d, Kodi#: %d, Provider: %s)",
+    kodi::Log(ADDON_LOG_DEBUG, "Loaded channel: %s (Backend#: %d, Kodi#: %d, Provider: %s, Type: %s)",
               channel.channelName.c_str(),
               channelJson.HasMember("ChannelNumber") && channelJson["ChannelNumber"].IsInt() ?
                 channelJson["ChannelNumber"].GetInt() : 0,
               channel.channelNumber,
-              channel.provider.c_str());
+              channel.provider.c_str(),
+              channel.isRadio ? "Radio" : "TV");
   }
 
-  kodi::Log(ADDON_LOG_INFO, "Loaded %d channels from provider %s (offset: %d)",
-            static_cast<int>(channels.Size()), provider.c_str(), providerOffset);
+  kodi::Log(ADDON_LOG_INFO, "Loaded %d channels from provider %s (TV: %d, Radio: %d, offset: %d)",
+            static_cast<int>(channels.Size()), provider.c_str(), tvCount, radioCount, providerOffset);
 
   return true;
 }
@@ -522,7 +547,7 @@ rapidjson::Document CPVRUltimate::GetDRMConfigJson(const std::string& provider,
 PVR_ERROR CPVRUltimate::GetCapabilities(kodi::addon::PVRCapabilities& capabilities) {
   capabilities.SetSupportsEPG(true);
   capabilities.SetSupportsTV(true);
-  capabilities.SetSupportsRadio(false);
+  capabilities.SetSupportsRadio(true);
   capabilities.SetSupportsRecordings(false);
   capabilities.SetSupportsTimers(false);
   capabilities.SetSupportsChannelGroups(true);
@@ -760,21 +785,25 @@ PVR_ERROR CPVRUltimate::GetChannelStreamProperties(
 
 // Channel Group Methods
 PVR_ERROR CPVRUltimate::GetChannelGroupsAmount(int& amount) {
-  amount = 1; // Just "All Channels" group
+  amount = 2; // TV group + Radio group
   return PVR_ERROR_NO_ERROR;
 }
 
 PVR_ERROR CPVRUltimate::GetChannelGroups(bool radio,
                                           kodi::addon::PVRChannelGroupsResultSet& results) {
   if (radio) {
-    return PVR_ERROR_NO_ERROR;
+    // Create radio group
+    kodi::addon::PVRChannelGroup radioGroup;
+    radioGroup.SetIsRadio(true);
+    radioGroup.SetGroupName("Radio Stations");
+    results.Add(radioGroup);
+  } else {
+    // Create TV group
+    kodi::addon::PVRChannelGroup tvGroup;
+    tvGroup.SetIsRadio(false);
+    tvGroup.SetGroupName("TV Channels");
+    results.Add(tvGroup);
   }
-
-  // Just provide "All Channels" group
-  kodi::addon::PVRChannelGroup allGroup;
-  allGroup.SetIsRadio(false);
-  allGroup.SetGroupName("All Channels");
-  results.Add(allGroup);
 
   return PVR_ERROR_NO_ERROR;
 }
@@ -784,10 +813,11 @@ PVR_ERROR CPVRUltimate::GetChannelGroupMembers(
     kodi::addon::PVRChannelGroupMembersResultSet& results) {
 
   std::string groupName = group.GetGroupName();
+  bool isRadioGroup = group.GetIsRadio();
 
-  // Only handle "All Channels" group now
-  if (groupName == "All Channels") {
-    for (const auto& channel : m_channels) {
+  for (const auto& channel : m_channels) {
+    // Only add channels that match the group type (radio or TV)
+    if (channel.isRadio == isRadioGroup) {
       kodi::addon::PVRChannelGroupMember member;
       member.SetGroupName(groupName);
       member.SetChannelUniqueId(channel.channelNumber);
