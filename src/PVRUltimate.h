@@ -61,6 +61,12 @@ struct DRMConfig {
   DRMLicense license;
 };
 
+struct ChannelLookupInfo {
+  std::string provider;
+  std::string channelId;
+  int catchupHours;  // CHANGE from catchupDays
+};
+
 class ATTR_DLL_LOCAL CPVRUltimate : public kodi::addon::CAddonBase,
                                      public kodi::addon::CInstancePVRClient {
 public:
@@ -125,6 +131,7 @@ private:
   std::vector<UltimateChannel> m_channels;
   int m_nextChannelNumber;
   std::map<std::string, int> m_providerIdMap;
+  std::map<int, ChannelLookupInfo> m_channelLookup;
 
   // Helper methods
   bool RetryBackendCall(const std::string& operationName);
@@ -137,6 +144,8 @@ private:
   std::string GetManifestUrl(const std::string& provider, const std::string& channelId);
   bool IsProviderEnabled(const std::string& provider);
   int GenerateProviderUniqueId(const std::string& providerName);
+  bool GetChannelInfo(int channelUid, std::string& provider, std::string& channelId, int& catchupDays);
+
 
   // Version detection
   void DetectInputstreamVersion();

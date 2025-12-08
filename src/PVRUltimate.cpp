@@ -243,6 +243,24 @@ bool CPVRUltimate::LoadProviders() {
   return true;
 }
 
+bool CPVRUltimate::GetChannelInfo(int channelUid, std::string& provider,
+                                   std::string& channelId, int& catchupHours) {
+  auto it = m_channelLookup.find(channelUid);
+
+  if (it == m_channelLookup.end()) {
+    kodi::Log(ADDON_LOG_ERROR, "Channel lookup failed for channelUid: %d", channelUid);
+    return false;
+  }
+
+  provider = it->second.provider;
+  channelId = it->second.channelId;
+  catchupHours = it->second.catchupHours;
+
+  kodi::Log(ADDON_LOG_DEBUG, "Channel lookup for %d: provider=%s, channelId=%s, catchupHours=%d",
+            channelUid, provider.c_str(), channelId.c_str(), catchupHours);
+  return true;
+}
+
 bool CPVRUltimate::LoadChannels() {
   m_channels.clear();
   m_nextChannelNumber = 1;
@@ -402,6 +420,26 @@ bool CPVRUltimate::LoadChannelsForProvider(const std::string& provider) {
       tvCount++;
     }
 
+    // ==================================================================
+    // CHANNEL LOOKUP INFO FOR CATCHUP SUPPORT
+    // ==================================================================
+    ChannelLookupInfo lookupInfo;
+    lookupInfo.provider = provider;
+    lookupInfo.channelId = channel.channelId;
+
+    // Get catchup hours from backend response
+    if (channelJson.HasMember("CatchupHours") && channelJson["CatchupHours"].IsInt()) {  // CHANGE
+      lookupInfo.catchupHours = channelJson["CatchupHours"].GetInt();  // CHANGE
+    } else {
+      lookupInfo.catchupHours = 0; // No catchup support
+    }
+
+    m_channelLookup[channel.channelNumber] = lookupInfo;
+
+    kodi::Log(ADDON_LOG_DEBUG, "Added channel lookup: %d -> %s/%s (catchup: %d hours)",  // CHANGE
+              channel.channelNumber, lookupInfo.provider.c_str(),
+              lookupInfo.channelId.c_str(), lookupInfo.catchupHours);
+
     m_channels.push_back(channel);
 
     kodi::Log(ADDON_LOG_DEBUG, "Loaded channel: %s (Backend#: %d, Kodi#: %d, Provider: %s, Type: %s)",
@@ -552,7 +590,7 @@ PVR_ERROR CPVRUltimate::GetCapabilities(kodi::addon::PVRCapabilities& capabiliti
   capabilities.SetSupportsTimers(false);
   capabilities.SetSupportsChannelGroups(true);
   capabilities.SetSupportsChannelScan(false);
-  capabilities.SetHandlesInputStream(true);
+  capabilities.SetHandlesInputStream(false);
   capabilities.SetHandlesDemuxing(false);
 
   // ENABLE PROVIDER SUPPORT
@@ -1027,23 +1065,288 @@ PVR_ERROR CPVRUltimate::IsEPGTagRecordable(const kodi::addon::PVREPGTag& tag, bo
   return PVR_ERROR_NO_ERROR;
 }
 
-PVR_ERROR CPVRUltimate::IsEPGTagPlayable(const kodi::addon::PVREPGTag& tag, bool& bIsPlayable) {
-  // For most IPTV services, EPG tags are informational only, not directly playable
-  // Future events cannot be played, and current events usually can't be restarted
-  // unless the provider offers catch-up/restart functionality
+PVR_ERROR CPVRUltimate::IsEPGTagPlayable(const kodi::addon::PVREPGTag& tag,
+                                         bool& bIsPlayable) {
+    // Default to not playable
+    bIsPlayable = false;
 
-  bIsPlayable = false;
-  return PVR_ERROR_NO_ERROR;
+    // Get channel info
+    int channelUid = tag.GetUniqueChannelId();
+    std::string provider;
+    std::string channelId;
+    int catchupHours = 0;
+
+    if (!GetChannelInfo(channelUid, provider, channelId, catchupHours)) {
+        kodi::Log(ADDON_LOG_DEBUG,
+                  "Cannot determine playability - no channel info for %d", channelUid);
+        return PVR_ERROR_NO_ERROR;
+    }
+
+    // Check if channel supports catchup
+    if (catchupHours <= 0) {  // CHANGE
+      kodi::Log(ADDON_LOG_DEBUG,
+                "EPG not playable - channel %s/%s has no catchup (hours: %d)",  // CHANGE
+                provider.c_str(), channelId.c_str(), catchupHours);
+      return PVR_ERROR_NO_ERROR;
+    }
+
+    // Get current time
+    time_t now = std::time(nullptr);
+    time_t startTime = tag.GetStartTime();
+    time_t endTime = tag.GetEndTime();
+
+    // Calculate catchup window boundaries
+    time_t catchupStart = now - (catchupHours * 3600);
+
+    // Event must have ended (be in the past)
+    if (endTime > now) {
+        kodi::Log(ADDON_LOG_DEBUG,
+                  "EPG not playable - event hasn't ended yet (ends in %ld seconds)",
+                  endTime - now);
+        return PVR_ERROR_NO_ERROR;
+    }
+
+    // Event must be within catchup window
+    if (endTime < catchupStart) {
+      kodi::Log(ADDON_LOG_DEBUG,
+                "EPG not playable - event too old (ended %ld hours ago, max: %d hours)",  // CHANGE
+                (now - endTime) / 3600, catchupHours);
+      return PVR_ERROR_NO_ERROR;
+    }
+
+    // All checks passed - event is playable
+    bIsPlayable = true;
+
+    kodi::Log(ADDON_LOG_DEBUG,
+              "EPG tag IS playable: '%s' on %s/%s (ended %ld mins ago, catchup: %d hours)",  // CHANGE
+              tag.GetTitle().c_str(), provider.c_str(), channelId.c_str(),
+              (now - endTime) / 60, catchupHours);  // CHANGE
+
+    return PVR_ERROR_NO_ERROR;
 }
 
-PVR_ERROR CPVRUltimate::GetEPGTagStreamProperties(const kodi::addon::PVREPGTag& tag,
-                                                  std::vector<kodi::addon::PVRStreamProperty>& properties) {
-  // If you implement catch-up functionality later:
-  // 1. Find the channel
-  // 2. Build a manifest URL with time range (start_time=tag.GetStartTime())
-  // 3. Set stream properties similar to GetChannelStreamProperties()
+PVR_ERROR CPVRUltimate::GetEPGTagStreamProperties(
+    const kodi::addon::PVREPGTag& tag,
+    std::vector<kodi::addon::PVRStreamProperty>& properties) {
 
-  return PVR_ERROR_NOT_IMPLEMENTED; // For now
+    // Extract channel ID from EPG tag
+    int channelUid = tag.GetUniqueChannelId();
+    unsigned int broadcastId = tag.GetUniqueBroadcastId();
+
+    kodi::Log(ADDON_LOG_INFO, "Getting EPG stream properties for channel %d, broadcast %u, "
+              "EPG: '%s' (start: %ld, end: %ld)",
+              channelUid, broadcastId, tag.GetTitle().c_str(),
+              tag.GetStartTime(), tag.GetEndTime());
+
+    // Get channel info (provider, channelId, catchupDays) from lookup
+    std::string provider;
+    std::string channelId;
+    int catchupHours = 0;
+
+    if (!GetChannelInfo(channelUid, provider, channelId, catchupHours)) {
+        kodi::Log(ADDON_LOG_ERROR, "Failed to get channel info for EPG tag (channelUid: %d)",
+                  channelUid);
+        return PVR_ERROR_INVALID_PARAMETERS;
+    }
+
+    // Check if this channel supports catchup
+    if (catchupHours <= 0) {  // CHANGE
+      kodi::Log(ADDON_LOG_WARNING,
+                "Channel %s/%s does not support catchup (catchupHours: %d)",  // CHANGE
+                provider.c_str(), channelId.c_str(), catchupHours);
+      return PVR_ERROR_NOT_IMPLEMENTED;
+    }
+
+    // Check if EPG tag is in the past (required for catchup)
+    time_t now = std::time(nullptr);
+    if (tag.GetStartTime() > now) {
+        kodi::Log(ADDON_LOG_WARNING, "EPG tag is in the future, cannot play yet");
+        return PVR_ERROR_NOT_IMPLEMENTED;
+    }
+
+    // Check if EPG tag is too old (beyond catchup window)
+    time_t catchupStart = now - (catchupHours * 3600);
+
+  if (tag.GetEndTime() < catchupStart) {
+      kodi::Log(ADDON_LOG_WARNING,
+                "EPG tag is outside catchup window (max %d hours)", catchupHours);  // CHANGE
+      return PVR_ERROR_NOT_IMPLEMENTED;
+    }
+
+    // Retry if backend became unavailable
+    if (!m_backendAvailable && !RetryBackendCall("EPG stream playback")) {
+        kodi::Log(ADDON_LOG_ERROR, "Backend unavailable for EPG stream playback");
+        return PVR_ERROR_SERVER_ERROR;
+    }
+
+    // Build STREAM URL (not manifest!) with time parameters for catchup
+    std::ostringstream streamApiUrl;
+    streamApiUrl << BuildApiUrl("/api/providers/") << provider
+                 << "/channels/" << channelId << "/stream"
+                 << "?start_time=" << tag.GetStartTime()
+                 << "&end_time=" << tag.GetEndTime()
+                 << "&epg_id=" << broadcastId;
+
+    // Add country if available from channel
+    UltimateChannel* ultimateChannel = nullptr;
+    for (auto& ch : m_channels) {
+        if (ch.channelNumber == channelUid) {
+            ultimateChannel = &ch;
+            if (!ch.country.empty()) {
+                streamApiUrl << "&country=" << ch.country;
+            }
+            break;
+        }
+    }
+
+    kodi::Log(ADDON_LOG_INFO, "Calling catchup stream API: %s", streamApiUrl.str().c_str());
+
+    std::string response = HttpGet(streamApiUrl.str());
+    if (response.empty()) {
+        kodi::Log(ADDON_LOG_ERROR, "Empty response from catchup stream API");
+        return PVR_ERROR_SERVER_ERROR;
+    }
+
+    // For direct mode (no proxy), backend returns JSON with manifest_url
+    // For proxy mode, backend returns MPD content directly
+
+    // Try to parse as JSON first
+    rapidjson::Document document;
+    bool isJson = ParseJsonResponse(response, document);
+
+    std::string manifestUrl;
+
+    if (isJson && document.IsObject()) {
+        // JSON response - check for error or manifest_url
+        if (document.HasMember("error") && document["error"].IsString()) {
+            kodi::Log(ADDON_LOG_ERROR, "Catchup stream API returned error: %s",
+                      document["error"].GetString());
+            return PVR_ERROR_SERVER_ERROR;
+        }
+
+        if (document.HasMember("manifest_url") && document["manifest_url"].IsString()) {
+            manifestUrl = document["manifest_url"].GetString();
+            kodi::Log(ADDON_LOG_INFO, "Extracted catchup manifest URL: %s", manifestUrl.c_str());
+        } else {
+            kodi::Log(ADDON_LOG_ERROR, "No manifest_url in catchup API response");
+            return PVR_ERROR_SERVER_ERROR;
+        }
+    } else {
+        // Not JSON - assume it's direct MPD content (proxy mode)
+        // Use the stream URL itself as manifest URL
+        manifestUrl = streamApiUrl.str();
+        kodi::Log(ADDON_LOG_INFO, "Using stream URL directly (proxy mode): %s",
+                  manifestUrl.c_str());
+    }
+
+    // Set up inputstream.adaptive properties
+    properties.emplace_back(PVR_STREAM_PROPERTY_INPUTSTREAM, "inputstream.adaptive");
+    properties.emplace_back(PVR_STREAM_PROPERTY_STREAMURL, manifestUrl);
+
+    // Add catchup-specific properties for inputstream.adaptive
+    properties.emplace_back("inputstream.adaptive.play_timeshift_buffer", "false");
+    properties.emplace_back("inputstream.adaptive.manifest_update_parameter", "full");
+
+    // Get DRM configuration for catchup
+    if (ultimateChannel && ultimateChannel->useCdm) {
+        // Build DRM URL with catchup parameters
+        std::ostringstream drmUrl;
+        drmUrl << BuildApiUrl("/api/providers/") << provider
+               << "/channels/" << channelId << "/drm"
+               << "?start_time=" << tag.GetStartTime()
+               << "&end_time=" << tag.GetEndTime()
+               << "&epg_id=" << broadcastId;
+
+        if (!ultimateChannel->country.empty()) {
+            drmUrl << "&country=" << ultimateChannel->country;
+        }
+
+        kodi::Log(ADDON_LOG_DEBUG, "Fetching DRM for catchup: %s", drmUrl.str().c_str());
+
+        if (m_useModernDrm) {
+            // Version 22+: Use new JSON-based DRM config format
+            std::string drmResponse = HttpGet(drmUrl.str());
+
+            if (!drmResponse.empty()) {
+                rapidjson::Document drmDoc;
+                if (ParseJsonResponse(drmResponse, drmDoc)) {
+                    if (drmDoc.HasMember("drm_configs") && drmDoc["drm_configs"].IsObject()) {
+                        // Extract just the drm_configs object
+                        rapidjson::Document drmConfigs(rapidjson::kObjectType);
+                        drmConfigs.CopyFrom(drmDoc["drm_configs"], drmConfigs.GetAllocator());
+
+                        if (!drmConfigs.ObjectEmpty()) {
+                            // Convert to string
+                            rapidjson::StringBuffer buffer;
+                            rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
+                            drmConfigs.Accept(writer);
+
+                            std::string drmConfigStr = buffer.GetString();
+                            properties.emplace_back("inputstream.adaptive.drm", drmConfigStr);
+
+                            kodi::Log(ADDON_LOG_INFO,
+                                      "Set modern DRM config for catchup (%zu bytes)",
+                                      drmConfigStr.size());
+                        }
+                    }
+                }
+            }
+        } else {
+            // Legacy version (<22): Use old drm_legacy format
+            std::string drmResponse = HttpGet(drmUrl.str());
+
+            if (!drmResponse.empty()) {
+                rapidjson::Document drmDoc;
+                if (ParseJsonResponse(drmResponse, drmDoc)) {
+                    if (drmDoc.HasMember("drm_configs") && drmDoc["drm_configs"].IsObject()) {
+                        const rapidjson::Value& drmConfigs = drmDoc["drm_configs"];
+
+                        // Get first DRM system
+                        for (auto it = drmConfigs.MemberBegin();
+                             it != drmConfigs.MemberEnd(); ++it) {
+
+                            std::string drmSystem = it->name.GetString();
+                            const rapidjson::Value& drmData = it->value;
+
+                            if (drmData.HasMember("license") &&
+                                drmData["license"].IsObject()) {
+                                const rapidjson::Value& license = drmData["license"];
+
+                                if (license.HasMember("server_url") &&
+                                    license["server_url"].IsString()) {
+
+                                    std::string licenseUrl = license["server_url"].GetString();
+                                    std::string drmLegacy = drmSystem + "|" + licenseUrl;
+
+                                    // Add headers if present
+                                    if (license.HasMember("req_headers") &&
+                                        license["req_headers"].IsString()) {
+                                        drmLegacy += "|" +
+                                                    std::string(license["req_headers"].GetString());
+                                    }
+
+                                    properties.emplace_back("inputstream.adaptive.drm_legacy",
+                                                          drmLegacy);
+
+                                    kodi::Log(ADDON_LOG_INFO,
+                                              "Set legacy DRM config for catchup: %s",
+                                              drmLegacy.c_str());
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    kodi::Log(ADDON_LOG_INFO,
+              "Successfully set up catchup stream for '%s' (channel: %s, program: %s)",
+              ultimateChannel ? ultimateChannel->channelName.c_str() : "unknown",
+              channelId.c_str(), tag.GetTitle().c_str());
+
+    return PVR_ERROR_NO_ERROR;
 }
 
 PVR_ERROR CPVRUltimate::GetSignalStatus(int channelUid,
