@@ -937,21 +937,21 @@ PVR_ERROR CPVRUltimate::GetEPGForChannel(int channelUid, time_t start, time_t en
       if (epgItem.HasMember("title") && epgItem["title"].IsString()) {
         tag.SetTitle(epgItem["title"].GetString());
       } else {
-        tag.SetTitle("Unknown"); // Required field, can't be empty
+        tag.SetTitle("Unknown");
       }
 
-      // REQUIRED: Start time
+      // REQUIRED: Start time (UTC)
       if (epgItem.HasMember("start") && epgItem["start"].IsUint64()) {
         tag.SetStartTime(epgItem["start"].GetUint64());
       } else {
-        tag.SetStartTime(0); // Fallback
+        tag.SetStartTime(0);
       }
 
-      // REQUIRED: End time
+      // REQUIRED: End time (UTC)
       if (epgItem.HasMember("end") && epgItem["end"].IsUint64()) {
         tag.SetEndTime(epgItem["end"].GetUint64());
       } else {
-        tag.SetEndTime(0); // Fallback
+        tag.SetEndTime(0);
       }
 
       // OPTIONAL: Plot outline
@@ -1039,11 +1039,10 @@ PVR_ERROR CPVRUltimate::GetEPGForChannel(int channelUid, time_t start, time_t en
         tag.SetYear(epgItem["year"].GetInt());
       }
 
-      // OPTIONAL: First aired - convert time_t to string if needed
+      // OPTIONAL: First aired (UTC timestamp converted to YYYY-MM-DD format)
       if (epgItem.HasMember("first_aired") && epgItem["first_aired"].IsUint64()) {
-        // Convert time_t to string format (YYYY-MM-DD)
         time_t firstAiredTime = epgItem["first_aired"].GetUint64();
-        struct tm *timeinfo = localtime(&firstAiredTime);
+        struct tm* timeinfo = gmtime(&firstAiredTime);
         char buffer[11];
         strftime(buffer, sizeof(buffer), "%Y-%m-%d", timeinfo);
         tag.SetFirstAired(buffer);
