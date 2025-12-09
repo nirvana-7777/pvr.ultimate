@@ -123,7 +123,7 @@ private:
   bool m_useModernDrm;
 
   // Retry constants
-  static const int MAX_RETRIES = 5;
+  static const int MAX_RETRIES = 10;
   static const int RETRY_DELAY_MS = 2000;
 
   // Data
