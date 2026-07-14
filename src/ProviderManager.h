@@ -5,6 +5,7 @@
 #include <vector>
 #include <map>
 #include <shared_mutex>
+#include <mutex>
 #include <functional>
 #include "rapidjson/document.h"
 
@@ -15,7 +16,7 @@ public:
     bool LoadProviders(const std::function<std::string(const std::string&)>& httpGet,
                        const std::function<bool(const std::string&, rapidjson::Document&)>& parseJson);
 
-    bool GetProviders(kodi::addon::PVRProvidersResultSet& results);
+    bool GetProviders(kodi::addon::PVRProvidersResultSet& results) const;
     int GetProvidersAmount() const;
 
     std::string GetProviderName(int uniqueId) const;

@@ -91,14 +91,18 @@ private:
   std::unique_ptr<TimerManager> m_timerManager;
 
   // HTTP methods
-  std::string HttpGet(const std::string& url);
-  bool HttpGetWithHeaders(const std::string& url,
-                          std::string& response,
-                          std::string& drmConfigsBase64,
-                          std::string& streamHeadersBase64);
-  bool HttpDelete(const std::string& url);
-  bool HttpPost(const std::string& url, const std::string& body);
-  bool HttpPut(const std::string& url, const std::string& body);
+  static std::string HttpGet(const std::string& url);
+
+  static bool HttpGetWithHeaders(const std::string& url,
+                                 std::string& response,
+                                 std::string& drmConfigsBase64,
+                                 std::string& streamHeadersBase64);
+
+  static bool HttpDelete(const std::string& url);
+
+  static bool HttpPost(const std::string& url, const std::string& body);
+
+  static bool HttpPut(const std::string& url, const std::string& body);
   static std::string HttpSendRequest(const std::string& url, const std::string& method, const std::string& body);
 
   // Core methods

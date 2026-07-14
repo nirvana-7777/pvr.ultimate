@@ -295,10 +295,10 @@ DRMConfig CPVRUltimate::GetDRMConfig(const std::string& provider, const std::str
     }
 
     if (!drmSystems.empty()) {
-      auto selected = std::min_element(drmSystems.begin(), drmSystems.end(),
-                                       [](const auto& a, const auto& b) {
-                                         return a.second < b.second;
-                                       });
+      auto selected = std::ranges::min_element(drmSystems,
+                                               [](const auto& a, const auto& b) {
+                                                 return a.second < b.second;
+                                               });
       config.system = selected->first;
       const rapidjson::Value& drmData = drmConfigs[selected->first];
       config.priority = selected->second;

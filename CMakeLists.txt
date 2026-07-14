@@ -47,9 +47,14 @@ add_definitions(-DULTIMATE_VERSION=${ULTIMATE_VERSION})
 add_definitions(-DRAPIDJSON_HAS_STDSTRING=1)
 add_compile_options(-DRAPIDJSON_HAS_STDSTRING=1)
 
-# Make sure the source directory is in the include path for the build
-target_include_directories(pvr.ultimate PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-
+# NOTE: build_addon() is what actually creates the pvr.ultimate target (via
+# ULTIMATE_SOURCES/ULTIMATE_HEADERS above). The target does not exist before
+# this call, so any target_include_directories(pvr.ultimate ...) must come
+# after it, not before -- calling it before would abort CMake configure
+# with "target ... which is not built by this project" and prevent
+# compile_commands.json from being (re)generated. The src/ include path is
+# already covered by the include_directories() call above, so no extra
+# target-scoped include is needed here.
 build_addon(pvr.ultimate ULTIMATE DEPLIBS)
 
 include(CPack)

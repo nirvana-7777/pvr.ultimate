@@ -156,27 +156,26 @@ void TimerManager::LoadTimersForProvider(const std::string& provider,
   }
 }
 
-bool TimerManager::GetTimerTypes(std::vector<kodi::addon::PVRTimerType>& types) {
+bool TimerManager::GetTimerTypes(std::vector<kodi::addon::PVRTimerType>& types) const {
   std::shared_lock<std::shared_mutex> lock(m_dataMutex);
   for (const auto& timerType : m_timerTypes) {
     kodi::addon::PVRTimerType type;
     type.SetId(timerType.id);
     type.SetDescription(timerType.description);
-    type.SetPriority(timerType.priority);
-    type.SetMaxTimers(99);
+    type.SetPrioritiesDefault(timerType.priority);
 
-    type.SetFeatures(
+    type.SetAttributes(
       PVR_TIMER_TYPE_SUPPORTS_START_TIME |
       PVR_TIMER_TYPE_SUPPORTS_END_TIME |
       PVR_TIMER_TYPE_SUPPORTS_PRIORITY |
       PVR_TIMER_TYPE_SUPPORTS_LIFETIME |
-      PVR_TIMER_TYPE_SUPPORTS_RECORD_FOLDERS |
-      PVR_TIMER_TYPE_SUPPORTS_ANYTIME |
-      PVR_TIMER_TYPE_SUPPORTS_EPG_MATCH |
-      PVR_TIMER_TYPE_SUPPORTS_MARGIN_START |
-      PVR_TIMER_TYPE_SUPPORTS_MARGIN_END |
-      PVR_TIMER_TYPE_SUPPORTS_WEEKDAYS |
-      PVR_TIMER_TYPE_SUPPORTS_SERIES_LINK
+      PVR_TIMER_TYPE_SUPPORTS_RECORDING_FOLDERS |
+      PVR_TIMER_TYPE_SUPPORTS_START_ANYTIME |
+      PVR_TIMER_TYPE_SUPPORTS_END_ANYTIME |
+      PVR_TIMER_TYPE_SUPPORTS_FULLTEXT_EPG_MATCH |
+      PVR_TIMER_TYPE_SUPPORTS_START_MARGIN |
+      PVR_TIMER_TYPE_SUPPORTS_END_MARGIN |
+      PVR_TIMER_TYPE_SUPPORTS_WEEKDAYS
     );
     types.push_back(type);
   }
@@ -188,7 +187,7 @@ int TimerManager::GetTimersAmount() const {
   return static_cast<int>(m_timers.size());
 }
 
-bool TimerManager::GetTimers(kodi::addon::PVRTimersResultSet& results) {
+bool TimerManager::GetTimers(kodi::addon::PVRTimersResultSet& results) const {
   std::shared_lock<std::shared_mutex> lock(m_dataMutex);
   for (const auto& timer : m_timers) {
     kodi::addon::PVRTimer kodiTimer;
@@ -200,7 +199,7 @@ bool TimerManager::GetTimers(kodi::addon::PVRTimersResultSet& results) {
 
 bool TimerManager::MapTimerToKodi(const UltimateTimer& timer, kodi::addon::PVRTimer& kodiTimer) {
   kodiTimer.SetClientIndex(timer.clientIndex);
-  kodiTimer.SetTimerTypeId(timer.timerTypeId);
+  kodiTimer.SetTimerType(timer.timerTypeId);
   kodiTimer.SetTitle(timer.title);
   kodiTimer.SetState(MapTimerStateToKodi(timer.state));
   kodiTimer.SetStartTime(timer.startTime);
@@ -208,7 +207,9 @@ bool TimerManager::MapTimerToKodi(const UltimateTimer& timer, kodi::addon::PVRTi
 
   if (timer.parentClientIndex > 0) kodiTimer.SetParentClientIndex(timer.parentClientIndex);
   kodiTimer.SetClientChannelUid(timer.clientChannelUid);
-  if (!timer.channelName.empty()) kodiTimer.SetChannelName(timer.channelName);
+  // Note: kodi::addon::PVRTimer has no channel-name field -- Kodi resolves
+  // the displayed channel name itself from ClientChannelUid, so timer.channelName
+  // (kept on UltimateTimer for our own bookkeeping) is intentionally not sent.
 
   kodiTimer.SetStartAnyTime(timer.startAnyTime);
   kodiTimer.SetEndAnyTime(timer.endAnyTime);
@@ -223,17 +224,17 @@ bool TimerManager::MapTimerToKodi(const UltimateTimer& timer, kodi::addon::PVRTi
   kodiTimer.SetSeriesLink(timer.seriesLink);
 
   kodiTimer.SetFullTextEpgSearch(timer.fullTextEpgSearch);
-  if (!timer.epgSearchString.empty()) kodiTimer.SetEpgSearchString(timer.epgSearchString);
-  if (timer.epgUid > 0) kodiTimer.SetEpgUid(timer.epgUid);
+  if (!timer.epgSearchString.empty()) kodiTimer.SetEPGSearchString(timer.epgSearchString);
+  if (timer.epgUid > 0) kodiTimer.SetEPGUid(timer.epgUid);
   if (!timer.directory.empty()) kodiTimer.SetDirectory(timer.directory);
   if (timer.maxRecordings > 0) kodiTimer.SetMaxRecordings(timer.maxRecordings);
   if (timer.recordingGroup > 0) kodiTimer.SetRecordingGroup(timer.recordingGroup);
   if (timer.genreType > 0) kodiTimer.SetGenreType(timer.genreType);
   if (timer.genreSubType > 0) kodiTimer.SetGenreSubType(timer.genreSubType);
-  if (!timer.description.empty()) kodiTimer.SetDescription(timer.description);
+  if (!timer.description.empty()) kodiTimer.SetSummary(timer.description);
 
   kodiTimer.SetPreventDuplicateEpisodes(
-    static_cast<PVR_TIMER_DUPLICATEHANDLING>(timer.preventDuplicateEpisodes));
+    static_cast<unsigned int>(timer.preventDuplicateEpisodes));
 
   return true;
 }
@@ -241,14 +242,16 @@ bool TimerManager::MapTimerToKodi(const UltimateTimer& timer, kodi::addon::PVRTi
 bool TimerManager::MapKodiTimerToUltimate(const kodi::addon::PVRTimer& kodiTimer,
                                           UltimateTimer& ultimateTimer) {
   ultimateTimer.clientIndex = kodiTimer.GetClientIndex();
-  ultimateTimer.timerTypeId = kodiTimer.GetTimerTypeId();
+  ultimateTimer.timerTypeId = kodiTimer.GetTimerType();
   ultimateTimer.title = kodiTimer.GetTitle();
   ultimateTimer.state = kodiTimer.GetState();
   ultimateTimer.startTime = kodiTimer.GetStartTime();
   ultimateTimer.endTime = kodiTimer.GetEndTime();
   ultimateTimer.parentClientIndex = kodiTimer.GetParentClientIndex();
   ultimateTimer.clientChannelUid = kodiTimer.GetClientChannelUid();
-  ultimateTimer.channelName = kodiTimer.GetChannelName();
+  // Note: no GetChannelName() on kodi::addon::PVRTimer -- if we need the
+  // channel name here, it has to be resolved from clientChannelUid via the
+  // channel lookup, not read back off the Kodi timer object.
   ultimateTimer.startAnyTime = kodiTimer.GetStartAnyTime();
   ultimateTimer.endAnyTime = kodiTimer.GetEndAnyTime();
   ultimateTimer.marginStart = kodiTimer.GetMarginStart();
@@ -259,14 +262,14 @@ bool TimerManager::MapKodiTimerToUltimate(const kodi::addon::PVRTimer& kodiTimer
   ultimateTimer.firstDay = kodiTimer.GetFirstDay();
   ultimateTimer.seriesLink = kodiTimer.GetSeriesLink();
   ultimateTimer.fullTextEpgSearch = kodiTimer.GetFullTextEpgSearch();
-  ultimateTimer.epgSearchString = kodiTimer.GetEpgSearchString();
-  ultimateTimer.epgUid = kodiTimer.GetEpgUid();
+  ultimateTimer.epgSearchString = kodiTimer.GetEPGSearchString();
+  ultimateTimer.epgUid = kodiTimer.GetEPGUid();
   ultimateTimer.directory = kodiTimer.GetDirectory();
   ultimateTimer.maxRecordings = kodiTimer.GetMaxRecordings();
   ultimateTimer.recordingGroup = kodiTimer.GetRecordingGroup();
   ultimateTimer.genreType = kodiTimer.GetGenreType();
   ultimateTimer.genreSubType = kodiTimer.GetGenreSubType();
-  ultimateTimer.description = kodiTimer.GetDescription();
+  ultimateTimer.description = kodiTimer.GetSummary();
   ultimateTimer.preventDuplicateEpisodes = kodiTimer.GetPreventDuplicateEpisodes();
 
   return true;

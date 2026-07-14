@@ -81,7 +81,7 @@ void RecordingManager::LoadRecordingsForProvider(const std::string& provider,
     rec.releaseYear = (recJson.HasMember("ReleaseYear") && recJson["ReleaseYear"].IsInt()) ? recJson["ReleaseYear"].GetInt() : 0;
 
     rec.status = (recJson.HasMember("Status") && recJson["Status"].IsString()) ? recJson["Status"].GetString() : "";
-    rec.isPlayable = (PLAYABLE_STATUSES.find(rec.status) != PLAYABLE_STATUSES.end());
+    rec.isPlayable = (PLAYABLE_STATUSES.contains(rec.status));
     rec.isDeleted = (recJson.HasMember("IsDeleted") && recJson["IsDeleted"].IsBool()) ? recJson["IsDeleted"].GetBool() : false;
 
     outRecordings.push_back(rec);
@@ -94,7 +94,7 @@ int RecordingManager::GetRecordingsAmount(bool deleted) const {
                                [deleted](const UltimateRecording& r){ return r.isDeleted == deleted; });
 }
 
-bool RecordingManager::GetRecordings(bool deleted, kodi::addon::PVRRecordingsResultSet& results) {
+bool RecordingManager::GetRecordings(bool deleted, kodi::addon::PVRRecordingsResultSet& results) const {
   std::shared_lock<std::shared_mutex> lock(m_dataMutex);
   for (const auto& recording : m_recordings) {
     if (recording.isDeleted != deleted) continue;
@@ -131,7 +131,9 @@ bool RecordingManager::MapRecordingToKodi(const UltimateRecording& recording,
   if (recording.seasonNumber > 0) kodiRecording.SetSeriesNumber(recording.seasonNumber);
   if (recording.episodeNumber > 0) kodiRecording.SetEpisodeNumber(recording.episodeNumber);
   if (!recording.episodeName.empty()) kodiRecording.SetEpisodeName(recording.episodeName);
-  if (!recording.seriesTitle.empty()) kodiRecording.SetSeriesTitle(recording.seriesTitle);
+  // Note: kodi::addon::PVRRecording has no series-title field (only
+  // Title/TitleExtraInfo/EpisodeName/SeriesNumber/EpisodeNumber), so
+  // recording.seriesTitle is intentionally not sent to Kodi here.
 
   if (recording.releaseYear > 0) kodiRecording.SetYear(recording.releaseYear);
   if (!recording.firstAired.empty()) kodiRecording.SetFirstAired(recording.firstAired);
@@ -141,20 +143,22 @@ bool RecordingManager::MapRecordingToKodi(const UltimateRecording& recording,
   if (recording.sizeInBytes > 0) kodiRecording.SetSizeInBytes(recording.sizeInBytes);
   if (recording.priority > 0) kodiRecording.SetPriority(recording.priority);
   if (recording.lifetime > 0) kodiRecording.SetLifetime(recording.lifetime);
-  if (!recording.flags.empty()) kodiRecording.SetFlags(recording.flags);
+  // TODO: kodi::addon::PVRRecording::SetFlags() takes an unsigned int bitmask
+  // of PVR_RECORDING_FLAG_IS_SERIES/IS_NEW/IS_PREMIERE/IS_FINALE/IS_LIVE, but
+  // recording.flags is the raw "Flags" string from the backend response. Need
+  // to know the backend's actual string format before this can be translated
+  // into the real bitmask -- left unset for now rather than guessing.
   if (recording.clientProviderUid > 0) kodiRecording.SetClientProviderUid(recording.clientProviderUid);
   if (!recording.providerName.empty()) kodiRecording.SetProviderName(recording.providerName);
 
-  kodiRecording.SetDeleted(recording.isDeleted);
+  kodiRecording.SetIsDeleted(recording.isDeleted);
 
-  PVR_RECORDING_STATUS kodiStatus = PVR_RECORDING_STATUS_UNKNOWN;
-  if (recording.status == "PENDING") kodiStatus = PVR_RECORDING_STATUS_SCHEDULED;
-  else if (recording.status == "RECORDING") kodiStatus = PVR_RECORDING_STATUS_RECORDING;
-  else if (recording.status == "COMPLETED") kodiStatus = PVR_RECORDING_STATUS_COMPLETED;
-  else if (recording.status == "FAILED") kodiStatus = PVR_RECORDING_STATUS_FAILED;
-  else if (recording.status == "CANCELLED") kodiStatus = PVR_RECORDING_STATUS_CANCELLED;
-  else if (recording.status == "DELETED") kodiStatus = PVR_RECORDING_STATUS_DELETED;
-  kodiRecording.SetStatus(kodiStatus);
+  // Note: kodi::addon::PVRRecording has no status field / PVR_RECORDING_STATUS
+  // type in this API -- the only lifecycle bit Kodi exposes for a recording is
+  // IsDeleted (set above). "PENDING"/"RECORDING" states from the backend are
+  // presumably represented as Timers (see TimerManager::MapTimerStateToKodi),
+  // not as a status on the recording itself; recording.status is still used
+  // internally (see PLAYABLE_STATUSES / isPlayable above).
 
   return true;
 }
@@ -181,8 +185,7 @@ bool RecordingManager::DeleteRecording(const std::string& recordingId,
 
   {
     std::unique_lock<std::shared_mutex> lock(m_dataMutex);
-    UltimateRecording* rec = FindRecording(recordingId);
-    if (rec) {
+    if (UltimateRecording* rec = FindRecording(recordingId)) {
       rec->isDeleted = true;
     }
   }

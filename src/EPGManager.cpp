@@ -118,9 +118,9 @@ bool EPGManager::GetEPGTagStreamProperties(const kodi::addon::PVREPGTag& tag,
                << "&end_time=" << tag.GetEndTime()
                << "&epg_id=" << broadcastId;
 
-  bool useCdm = false;
   UltimateChannel channel;
   if (getChannelByUid(channelUid, channel)) {
+    bool useCdm = false;
     useCdm = channel.useCdm;
     if (!channel.country.empty()) streamApiUrl << "&country=" << channel.country;
   }

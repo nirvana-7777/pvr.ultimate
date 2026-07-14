@@ -36,7 +36,7 @@ bool ProviderManager::LoadProviders(const std::function<std::string(const std::s
   return true;
 }
 
-bool ProviderManager::GetProviders(kodi::addon::PVRProvidersResultSet& results) {
+bool ProviderManager::GetProviders(kodi::addon::PVRProvidersResultSet& results) const {
   std::shared_lock<std::shared_mutex> lock(m_dataMutex);
   for (const auto& provider : m_providers) {
     if (provider.enabled) {
