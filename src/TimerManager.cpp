@@ -1,6 +1,5 @@
 #include "TimerManager.h"
 #include "Utils.h"
-#include <kodi/General.h>
 #include <rapidjson/writer.h>
 #include <rapidjson/stringbuffer.h>
 

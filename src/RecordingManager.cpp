@@ -1,6 +1,5 @@
 #include "RecordingManager.h"
 #include "Utils.h"
-#include <kodi/General.h>
 #include <algorithm>
 
 const std::set<std::string> RecordingManager::PLAYABLE_STATUSES = {"COMPLETED", "RECORDING"};
@@ -91,8 +90,8 @@ void RecordingManager::LoadRecordingsForProvider(const std::string& provider,
 
 int RecordingManager::GetRecordingsAmount(bool deleted) const {
   std::shared_lock<std::shared_mutex> lock(m_dataMutex);
-  return std::count_if(m_recordings.begin(), m_recordings.end(),
-                       [deleted](const UltimateRecording& r){ return r.isDeleted == deleted; });
+  return std::ranges::count_if(m_recordings,
+                               [deleted](const UltimateRecording& r){ return r.isDeleted == deleted; });
 }
 
 bool RecordingManager::GetRecordings(bool deleted, kodi::addon::PVRRecordingsResultSet& results) {

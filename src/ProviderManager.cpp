@@ -1,6 +1,5 @@
 #include "ProviderManager.h"
 #include "Utils.h"
-#include <kodi/General.h>
 #include <algorithm>
 
 bool ProviderManager::LoadProviders(const std::function<std::string(const std::string&)>& httpGet,
@@ -55,8 +54,8 @@ bool ProviderManager::GetProviders(kodi::addon::PVRProvidersResultSet& results) 
 
 int ProviderManager::GetProvidersAmount() const {
   std::shared_lock<std::shared_mutex> lock(m_dataMutex);
-  return std::count_if(m_providers.begin(), m_providers.end(),
-                       [](const UltimateProvider& p){ return p.enabled; });
+  return std::ranges::count_if(m_providers,
+                               [](const UltimateProvider& p){ return p.enabled; });
 }
 
 std::string ProviderManager::GetProviderName(int uniqueId) const {

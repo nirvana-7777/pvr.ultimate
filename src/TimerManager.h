@@ -23,13 +23,13 @@ public:
   bool GetTimerTypes(std::vector<kodi::addon::PVRTimerType>& types);
   int GetTimersAmount() const;
   bool GetTimers(kodi::addon::PVRTimersResultSet& results);
-  
-  bool AddTimer(const kodi::addon::PVRTimer& timer,
-                const std::vector<UltimateProvider>& providers,
-                const std::map<int, ChannelLookupInfo>& channelLookup,
-                const std::function<std::string(const std::string&)>& buildApiUrl,
-                const std::function<bool(const std::string&, const std::string&)>& httpPost,
-                const std::function<void()>& loadTimers);
+
+  static bool AddTimer(const kodi::addon::PVRTimer& timer,
+                       const std::vector<UltimateProvider>& providers,
+                       const std::map<int, ChannelLookupInfo>& channelLookup,
+                       const std::function<std::string(const std::string&)>& buildApiUrl,
+                       const std::function<bool(const std::string&, const std::string&)>& httpPost,
+                       const std::function<void()>& loadTimers);
   
   bool DeleteTimer(int clientIndex, bool forceDelete,
                    const std::function<std::string(const std::string&)>& buildApiUrl,
@@ -62,8 +62,10 @@ private:
                              std::vector<UltimateTimer>& outTimers);
   
   bool MapTimerToKodi(const UltimateTimer& timer, kodi::addon::PVRTimer& kodiTimer);
-  bool MapKodiTimerToUltimate(const kodi::addon::PVRTimer& kodiTimer, UltimateTimer& ultimateTimer);
-  PVR_TIMER_STATE MapTimerStateToKodi(int state);
+
+  static bool MapKodiTimerToUltimate(const kodi::addon::PVRTimer& kodiTimer, UltimateTimer& ultimateTimer);
+
+  static PVR_TIMER_STATE MapTimerStateToKodi(int state);
 
   std::vector<UltimateTimer> m_timers;
   std::vector<UltimateTimerType> m_timerTypes;

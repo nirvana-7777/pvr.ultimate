@@ -30,8 +30,8 @@ public:
                                     const std::function<bool(const std::string&, rapidjson::Document&)>& parseJson,
                                     const std::function<bool(const std::string&, std::string&, std::string&, std::string&)>& httpGetWithHeaders,
                                     bool supportsPiggyback);
-  
-  bool GetRecordingEdl(const std::string& recordingId, std::vector<kodi::addon::PVREDLEntry>& edl);
+
+  static bool GetRecordingEdl(const std::string& recordingId, std::vector<kodi::addon::PVREDLEntry>& edl);
   
   UltimateRecording* FindRecording(const std::string& recordingId);
   const std::vector<UltimateRecording>& GetRecordings() const { return m_recordings; }

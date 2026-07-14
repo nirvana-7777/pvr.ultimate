@@ -10,7 +10,6 @@
 #include <algorithm>
 #include <thread>
 #include <chrono>
-#include <iomanip>
 
 CPVRUltimate::CPVRUltimate()
     : m_backendUrl("127.0.0.1"),

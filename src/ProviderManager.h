@@ -31,5 +31,5 @@ private:
     std::map<std::string, int> m_providerIdMap;
     mutable std::shared_mutex m_dataMutex;
 
-    bool IsProviderEnabled(const std::string& provider);
+    static bool IsProviderEnabled(const std::string& provider);
 };

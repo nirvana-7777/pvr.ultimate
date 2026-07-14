@@ -1,5 +1,4 @@
 #include "ChannelManager.h"
-#include <kodi/General.h>
 
 // Standard library includes
 #include <vector>
