@@ -1,69 +1,68 @@
 # Kodi Media Center language file
-# Addon Name: Ultimate PVR Client
+# Addon Name: PVR Ultimate
 # Addon id: pvr.ultimate
+# Addon Provider: Your Name
+
 msgid ""
 msgstr ""
+"Project-Id-Version: Kodi Addons\n"
+"Report-Msgid-Bugs-To: translations@kodi.tv\n"
+"POT-Creation-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"Last-Translator: Kodi Translation Team\n"
+"Language-Team: English (http://www.transifex.com/projects/p/kodi-main/language/en/)\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Language: en\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
 
-msgctxt "#30000"
-msgid "Backend Configuration"
-msgstr ""
-
-msgctxt "#30001"
-msgid "Connection Settings"
-msgstr ""
-
+# Settings categories
 msgctxt "#30010"
-msgid "Backend URL"
+msgid "Backend"
 msgstr ""
 
+# Settings groups
 msgctxt "#30011"
-msgid "The hostname or IP address of your backend server"
+msgid "Connection"
 msgstr ""
 
 msgctxt "#30012"
-msgid "Backend Port"
+msgid "Advanced"
 msgstr ""
 
-msgctxt "#30013"
-msgid "The port number of your backend server"
+# Backend URL setting
+msgctxt "#30020"
+msgid "Backend Server Address"
 msgstr ""
 
-msgctxt "#30100"
-msgid "Provider Settings"
+msgctxt "#30021"
+msgid "IP address or hostname of the Ultimate PVR backend server"
 msgstr ""
 
-msgctxt "#30101"
-msgid "Enable/Disable Providers"
+# Backend Port setting
+msgctxt "#30030"
+msgid "Backend Server Port"
 msgstr ""
 
-msgctxt "#30110"
-msgid "Enable Joyn Austria"
+msgctxt "#30031"
+msgid "Port number of the Ultimate PVR backend server (1-65535)"
 msgstr ""
 
-msgctxt "#30111"
-msgid "Enable or disable channels from Joyn Austria"
+# Retry Attempts setting
+msgctxt "#30040"
+msgid "Connection Retry Attempts"
 msgstr ""
 
-msgctxt "#30112"
-msgid "Enable Joyn Switzerland"
+msgctxt "#30041"
+msgid "Number of times to retry connecting to the backend before giving up (1-30)"
 msgstr ""
 
-msgctxt "#30113"
-msgid "Enable or disable channels from Joyn Switzerland"
+# Retry Delay setting
+msgctxt "#30050"
+msgid "Retry Delay (milliseconds)"
 msgstr ""
 
-msgctxt "#30114"
-msgid "Enable Joyn Germany"
-msgstr ""
-
-msgctxt "#30115"
-msgid "Enable or disable channels from Joyn Germany"
-msgstr ""
-
-msgctxt "#30116"
-msgid "Enable RTL+"
-msgstr ""
-
-msgctxt "#30117"
-msgid "Enable or disable channels from RTL+"
+msgctxt "#30051"
+msgid "Delay in milliseconds between connection retry attempts (100-10000)"
 msgstr ""

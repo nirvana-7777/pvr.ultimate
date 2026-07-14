@@ -1,20 +1,48 @@
 <?xml version="1.0" encoding="utf-8" standalone="yes"?>
 <settings>
-    <category id="backend" label="30000">
-        <group id="1" label="30001">
-            <setting id="backend_url" type="string" label="30010" help="30011">
+    <category id="backend" label="30010" help="">
+        <group id="1" label="30011">
+            <setting id="backend_url" type="string" label="30020" help="30021">
                 <level>0</level>
-                <default>localhost</default>
-                <constraints>
-                    <allowempty>false</allowempty>
-                </constraints>
+                <default>127.0.0.1</default>
+                <control type="edit" format="ipaddress">
+                    <heading>30020</heading>
+                </control>
             </setting>
-            <setting id="backend_port" type="integer" label="30012" help="30013">
+            <setting id="backend_port" type="integer" label="30030" help="30031">
                 <level>0</level>
                 <default>7777</default>
+                <control type="spinner" format="integer">
+                    <heading>30030</heading>
+                </control>
                 <constraints>
                     <minimum>1</minimum>
                     <maximum>65535</maximum>
+                </constraints>
+            </setting>
+        </group>
+        <group id="2" label="30012">
+            <setting id="retry_attempts" type="integer" label="30040" help="30041">
+                <level>1</level>
+                <default>10</default>
+                <control type="spinner" format="integer">
+                    <heading>30040</heading>
+                </control>
+                <constraints>
+                    <minimum>1</minimum>
+                    <maximum>30</maximum>
+                </constraints>
+            </setting>
+            <setting id="retry_delay" type="integer" label="30050" help="30051">
+                <level>1</level>
+                <default>2000</default>
+                <control type="spinner" format="integer">
+                    <heading>30050</heading>
+                </control>
+                <constraints>
+                    <minimum>100</minimum>
+                    <maximum>10000</maximum>
+                    <step>100</step>
                 </constraints>
             </setting>
         </group>
