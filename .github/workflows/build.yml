@@ -35,10 +35,11 @@ jobs:
         run: git clone --depth 1 --branch ${{ matrix.kodi-branch }} https://github.com/xbmc/xbmc.git kodi-source
 
       - name: Configure and Install Kodi Headers
-        # This generates KodiConfig.cmake and installs the headers to a local prefix
+        # Added -DCORE_PLATFORM_NAME=osx for macOS
         run: |
           cmake -S kodi-source -B kodi-build \
             -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/kodi-install \
+            -DCORE_PLATFORM_NAME=osx \
             -DENABLE_INTERNAL_FLATBUFFERS=ON \
             -DENABLE_INTERNAL_RAPIDJSON=ON
           cmake --install kodi-build
