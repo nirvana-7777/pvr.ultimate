@@ -487,10 +487,16 @@ PVR_ERROR CPVRUltimate::GetChannels(bool radio, kodi::addon::PVRChannelsResultSe
   return PVR_ERROR_NO_ERROR;
 }
 
+#ifdef PVR_SOURCE_EPG_AS_LIVE
 PVR_ERROR CPVRUltimate::GetChannelStreamProperties(
     const kodi::addon::PVRChannel& channel,
     PVR_SOURCE source,
     std::vector<kodi::addon::PVRStreamProperty>& properties) {
+#else
+PVR_ERROR CPVRUltimate::GetChannelStreamProperties(
+    const kodi::addon::PVRChannel& channel,
+    std::vector<kodi::addon::PVRStreamProperty>& properties) {
+#endif
 
   std::string provider, channelId;
   bool useCdm = true;

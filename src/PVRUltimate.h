@@ -32,12 +32,18 @@ public:
   PVR_ERROR GetProvidersAmount(int& amount) override;
   PVR_ERROR GetProviders(kodi::addon::PVRProvidersResultSet& results) override;
 
-  PVR_ERROR GetChannelsAmount(int& amount) override;
-  PVR_ERROR GetChannels(bool bRadio, kodi::addon::PVRChannelsResultSet& results) override;
-  PVR_ERROR GetChannelStreamProperties(
-      const kodi::addon::PVRChannel& channel,
-      PVR_SOURCE source,
-      std::vector<kodi::addon::PVRStreamProperty>& properties) override;
+    PVR_ERROR GetChannelsAmount(int& amount) override;
+    PVR_ERROR GetChannels(bool bRadio, kodi::addon::PVRChannelsResultSet& results) override;
+#ifdef PVR_SOURCE_EPG_AS_LIVE
+    PVR_ERROR GetChannelStreamProperties(
+        const kodi::addon::PVRChannel& channel,
+        PVR_SOURCE source,
+        std::vector<kodi::addon::PVRStreamProperty>& properties) override;
+#else
+    PVR_ERROR GetChannelStreamProperties(
+        const kodi::addon::PVRChannel& channel,
+        std::vector<kodi::addon::PVRStreamProperty>& properties) override;
+#endif
 
   PVR_ERROR GetChannelGroupsAmount(int& amount) override;
   PVR_ERROR GetChannelGroups(bool bRadio, kodi::addon::PVRChannelGroupsResultSet& results) override;
