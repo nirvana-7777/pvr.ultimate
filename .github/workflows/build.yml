@@ -34,10 +34,20 @@ jobs:
       - name: Clone Kodi Source
         run: git clone --depth 1 --branch ${{ matrix.kodi-branch }} https://github.com/xbmc/xbmc.git kodi-source
 
+      - name: Set Platform Name
+        run: |
+          if [ "${{ runner.os }}" = "macOS" ]; then
+            echo "KODI_PLATFORM=osx" >> $GITHUB_ENV
+          else
+            echo "KODI_PLATFORM=x11" >> $GITHUB_ENV
+          fi
+        shell: bash
+
       - name: Configure and Install Kodi Headers
         # This generates KodiConfig.cmake and installs the headers to a local prefix
         run: |
           cmake -S kodi-source -B kodi-build \
+            -DCORE_PLATFORM_NAME=$KODI_PLATFORM \
             -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/kodi-install \
             -DENABLE_INTERNAL_FLATBUFFERS=ON \
             -DENABLE_INTERNAL_RAPIDJSON=ON
@@ -45,10 +55,10 @@ jobs:
         shell: bash
 
       - name: Configure CMake
-        run: >
-          cmake -S pvr.ultimate -B pvr.ultimate/build
-          -DCMAKE_PREFIX_PATH=${{ github.workspace }}/kodi-install
-          -DCMAKE_BUILD_TYPE=Release
+        run: |
+          cmake -S pvr.ultimate -B pvr.ultimate/build \
+            -DCMAKE_PREFIX_PATH=${{ github.workspace }}/kodi-install \
+            -DCMAKE_BUILD_TYPE=Release
 
       - name: Build Add-on
         run: cmake --build pvr.ultimate/build --config Release --parallel 4
