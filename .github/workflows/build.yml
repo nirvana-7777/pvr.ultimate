@@ -1,0 +1,43 @@
+name: Build Multi-Platform Zips
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        kodi-version: [nexus, omega, piers]
+        include:
+          - os: ubuntu-latest
+            platform: linux
+          - os: windows-latest
+            platform: windows
+          - os: macos-latest
+            platform: macos
+
+    steps:
+      - name: Checkout Add-on
+        uses: actions/checkout@v4
+        with:
+          path: pvr.ultimate
+
+      - name: Build Add-on
+        uses: xbmc/action-build-addon@v1
+        with:
+          kodi-version: ${{ matrix.kodi-version }}
+          addon-path: pvr.ultimate
+          addon-id: pvr.ultimate
+
+      - name: Upload Zip Artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: pvr.ultimate-${{ matrix.platform }}-${{ matrix.kodi-version }}
+          path: ${{ github.workspace }}/pvr.ultimate/build/*.zip

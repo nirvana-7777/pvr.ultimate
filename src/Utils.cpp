@@ -1,10 +1,13 @@
 #include "Utils.h"
 #include <kodi/General.h>
-#include <kodi/tools/StringUtils.h>
 #include <sstream>
 #include <iomanip>
 #include <algorithm>
 #include <cctype>
+#include <vector>
+
+// Required by RapidJSON for GetParseError_En
+#include <rapidjson/error/en.h>
 
 #ifdef _WIN32
 #include <time.h>
@@ -23,7 +26,26 @@ bool Utils::ParseJsonResponse(const std::string& response, rapidjson::Document& 
 }
 
 std::string Utils::Base64Decode(const std::string& base64Data) {
-  return kodi::tools::StringUtils::Base64Decode(base64Data);
+  static const std::string base64_chars =
+      "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+      "abcdefghijklmnopqrstuvwxyz"
+      "0123456789+/";
+
+  std::string ret;
+  std::vector<int> T(256, -1);
+  for (int i = 0; i < 64; i++) T[base64_chars[i]] = i;
+
+  int val = 0, valb = -8;
+  for (unsigned char c : base64Data) {
+    if (T[c] == -1) break;
+    val = (val << 6) + T[c];
+    valb += 6;
+    if (valb >= 0) {
+      ret.push_back(char((val >> valb) & 0xFF));
+      valb -= 8;
+    }
+  }
+  return ret;
 }
 
 std::string Utils::UrlEncode(const std::string& value) {

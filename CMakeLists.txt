@@ -12,7 +12,7 @@ find_package(Kodi REQUIRED)
 
 # Explicitly set include directories
 include_directories(
-        ${KODI_INCLUDE_DIR}/..
+        ${KODI_INCLUDE_DIR}
         ${RAPIDJSON_INCLUDE_DIRS}
         ${CMAKE_CURRENT_SOURCE_DIR}/src
 )

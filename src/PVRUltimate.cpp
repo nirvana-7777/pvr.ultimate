@@ -2,7 +2,7 @@
 #include "Utils.h"
 #include <kodi/General.h>
 #include <kodi/AddonBase.h>
-#include <kodi/vfs/File.h>
+#include <kodi/Filesystem.h>
 #include <rapidjson/stringbuffer.h>
 #include <rapidjson/writer.h>
 #include <sstream>
@@ -191,24 +191,29 @@ std::string CPVRUltimate::BuildApiUrl(const std::string& endpoint) {
 std::string CPVRUltimate::HttpSendRequest(const std::string& url, const std::string& method, const std::string& body) {
   kodi::Log(ADDON_LOG_DEBUG, "HTTP %s: %s", method.c_str(), url.c_str());
 
+  // 1. Basis-URL vorbereiten und den ersten Header mit '|' anhängen
+  std::string formattedUrl = url + "|Content-Type=application/json";
+
+  // 2. HTTP-Methode anhängen (falls nicht GET)
+  if (method != "GET") {
+    formattedUrl += "&customrequest=" + method;
+  }
+
+  // 3. Body anhängen (muss URL-encoded sein!)
+  if (!body.empty()) {
+    formattedUrl += "&postdata=" + Utils::UrlEncode(body);
+  }
+
   kodi::vfs::CFile file;
 
-  if (method != "GET") {
-    file.CURLOption("CUSTOMREQUEST", method.c_str());
-  }
-
-  if (!body.empty()) {
-    file.CURLOption("postdata", body.c_str());
-    file.SetRequestHeader("Content-Type", "application/json");
-  }
-
-  if (!file.OpenFile(url, ADDON_READ_NO_CACHE)) {
+  // 4. Datei/URL direkt öffnen (Kodi parst die Optionen automatisch heraus)
+  if (!file.OpenFile(formattedUrl, ADDON_READ_NO_CACHE)) {
     kodi::Log(ADDON_LOG_ERROR, "Failed to open URL: %s", url.c_str());
     return "";
   }
 
   std::string content;
-  char buffer[1024];
+  char buffer[16384]; // Increased from 1024 for better performance
   ssize_t bytesRead;
   while ((bytesRead = file.Read(buffer, sizeof(buffer))) > 0) {
     content.append(buffer, bytesRead);
