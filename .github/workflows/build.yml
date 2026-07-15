@@ -34,6 +34,13 @@ jobs:
       - name: Clone Kodi Source
         run: git clone --depth 1 --branch ${{ matrix.kodi-branch }} https://github.com/xbmc/xbmc.git kodi-source
 
+      - name: Patch Kodi Platform Check
+        # This fixes the symlink globbing bug on macOS runners by forcing 'osx' and 'x11' as valid platforms
+        run: |
+          perl -pi -e 's/message\(FATAL_ERROR "invalid CORE_PLATFORM_NAME/message(STATUS "invalid CORE_PLATFORM_NAME/g' kodi-source/cmake/scripts/common/Platform.cmake
+          perl -pi -e 's/string\(REPLACE "\.cmake" "" platforms \$\{platforms\}\)/string(REPLACE ".cmake" "" platforms "osx;x11")/g' kodi-source/cmake/scripts/common/Platform.cmake
+        shell: bash
+
       - name: Set Platform Name
         run: |
           if [ "${{ runner.os }}" = "macOS" ]; then
@@ -44,7 +51,6 @@ jobs:
         shell: bash
 
       - name: Configure and Install Kodi Headers
-        # This generates KodiConfig.cmake and installs the headers to a local prefix
         run: |
           cmake -S kodi-source -B kodi-build \
             -DCORE_PLATFORM_NAME=$KODI_PLATFORM \
