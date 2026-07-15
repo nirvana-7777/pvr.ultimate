@@ -58,7 +58,8 @@ jobs:
             -DADDONS_DEFINITION_DIR=${{ github.workspace }}/xbmc/cmake/addons/addons \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/kodi-install \
-            -DPACKAGE_ZIP=ON
+            -DPACKAGE_ZIP=ON \
+            -DCMAKE_POLICY_VERSION_MINIMUM=3.5
         shell: bash
 
       - name: Build Add-on
