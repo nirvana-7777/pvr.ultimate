@@ -487,7 +487,7 @@ PVR_ERROR CPVRUltimate::GetChannels(bool radio, kodi::addon::PVRChannelsResultSe
   return PVR_ERROR_NO_ERROR;
 }
 
-#ifdef PVR_SOURCE_EPG_AS_LIVE
+#ifdef ULTIMATE_HAS_PVR_SOURCE
 PVR_ERROR CPVRUltimate::GetChannelStreamProperties(
     const kodi::addon::PVRChannel& channel,
     PVR_SOURCE source,

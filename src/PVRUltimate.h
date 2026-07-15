@@ -34,7 +34,7 @@ public:
 
     PVR_ERROR GetChannelsAmount(int& amount) override;
     PVR_ERROR GetChannels(bool bRadio, kodi::addon::PVRChannelsResultSet& results) override;
-#ifdef PVR_SOURCE_EPG_AS_LIVE
+#ifdef ULTIMATE_HAS_PVR_SOURCE
     PVR_ERROR GetChannelStreamProperties(
         const kodi::addon::PVRChannel& channel,
         PVR_SOURCE source,
