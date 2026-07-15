@@ -87,4 +87,8 @@ add_compile_options(-DRAPIDJSON_HAS_STDSTRING=1)
 # target-scoped include is needed here.
 build_addon(pvr.ultimate ULTIMATE DEPLIBS)
 
+set_target_properties(pvr.ultimate PROPERTIES
+        CXX_STANDARD 20
+        CXX_STANDARD_REQUIRED ON)
+
 include(CPack)
