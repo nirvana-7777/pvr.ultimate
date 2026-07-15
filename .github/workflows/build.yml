@@ -34,30 +34,11 @@ jobs:
       - name: Clone Kodi Source
         run: git clone --depth 1 --branch ${{ matrix.kodi-branch }} https://github.com/xbmc/xbmc.git kodi-source
 
-      - name: Patch Kodi Platform Check
-        # This bypasses the platform list directory-globbing issue on GitHub Actions runners
-        run: |
-          perl -pi -e 's/message\(FATAL_ERROR "invalid CORE_PLATFORM_NAME/message(STATUS "invalid CORE_PLATFORM_NAME/g' kodi-source/cmake/scripts/common/Platform.cmake
-          perl -pi -e 's/string\(REPLACE "\.cmake" "" platforms \$\{platforms\}\)/string(REPLACE ".cmake" "" platforms "osx;x11")/g' kodi-source/cmake/scripts/common/Platform.cmake
-        shell: bash
-
       - name: Configure and Install Kodi Headers
+        # We target project/cmake/kodi-dev-kit instead of the root kodi-source
         run: |
-          # Define OS-specific flags
-          if [ "${{ runner.os }}" = "macOS" ]; then
-            # Get host architecture (usually arm64 or x86_64 on GitHub runners)
-            ARCH=$(uname -m)
-            EXTRA_FLAGS="-DCORE_PLATFORM_NAME=osx -DCMAKE_SYSTEM_NAME=Darwin -DCPU=$ARCH"
-          else
-            EXTRA_FLAGS="-DCORE_PLATFORM_NAME=x11"
-          fi
-
-          cmake -S kodi-source -B kodi-build \
-            $EXTRA_FLAGS \
-            -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/kodi-install \
-            -DENABLE_INTERNAL_FLATBUFFERS=ON \
-            -DENABLE_INTERNAL_RAPIDJSON=ON
-          
+          cmake -S kodi-source/project/cmake/kodi-dev-kit -B kodi-build \
+            -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/kodi-install
           cmake --install kodi-build
         shell: bash
 
