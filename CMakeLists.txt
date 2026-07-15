@@ -14,22 +14,24 @@ set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${PROJECT_SOURCE_DIR})
 find_package(RapidJSON REQUIRED)
 find_package(Kodi REQUIRED)
 
-# Detect whether the fetched Kodi PVR API for this branch declares PVR_SOURCE
-# (introduced after Omega). Checked against the actual downloaded headers
-# rather than guessing a macro/enum name, since that has proven unstable
-# across Kodi branches.
-file(GLOB_RECURSE _ultimate_kodi_pvr_headers
-        "${KODI_INCLUDE_DIR}/kodi/addon-instance/pvr/*.h"
-        "${KODI_INCLUDE_DIR}/kodi/addon-instance/PVR.h"
-        "${KODI_INCLUDE_DIR}/kodi/c-api/addon-instance/pvr/*.h")
+message(STATUS "KODI_INCLUDE_DIR=${KODI_INCLUDE_DIR}")
+
+file(GLOB_RECURSE _ultimate_kodi_headers "${KODI_INCLUDE_DIR}/*.h")
+list(LENGTH _ultimate_kodi_headers _ultimate_kodi_header_count)
+message(STATUS "Scanning ${_ultimate_kodi_header_count} Kodi headers under KODI_INCLUDE_DIR for PVR_SOURCE")
 
 set(ULTIMATE_HAS_PVR_SOURCE FALSE)
-foreach(_hdr ${_ultimate_kodi_pvr_headers})
+foreach(_hdr ${_ultimate_kodi_headers})
     file(STRINGS "${_hdr}" _match REGEX "typedef enum PVR_SOURCE")
     if(_match)
         set(ULTIMATE_HAS_PVR_SOURCE TRUE)
+        message(STATUS "Found PVR_SOURCE declaration in ${_hdr}")
     endif()
 endforeach()
+
+if(_ultimate_kodi_header_count EQUAL 0)
+    message(WARNING "No Kodi headers found under KODI_INCLUDE_DIR - PVR_SOURCE detection cannot be trusted")
+endif()
 
 if(ULTIMATE_HAS_PVR_SOURCE)
     message(STATUS "Kodi PVR API declares PVR_SOURCE - using 3-arg GetChannelStreamProperties")
