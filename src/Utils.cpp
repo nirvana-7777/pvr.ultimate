@@ -5,14 +5,13 @@
 #include <algorithm>
 #include <cctype>
 #include <vector>
+#include <ctime>
 
 // Required by RapidJSON for GetParseError_En
 #include <rapidjson/error/en.h>
 
 #ifdef _WIN32
-#include <time.h>
-#else
-#include <time.h>
+    #define timegm _mkgmtime
 #endif
 
 bool Utils::ParseJsonResponse(const std::string& response, rapidjson::Document& document) {
