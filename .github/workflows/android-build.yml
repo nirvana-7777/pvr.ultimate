@@ -1,0 +1,123 @@
+name: Build Android Zips
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+
+env:
+  app_id: pvr.ultimate
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - kodi-branch: Nexus
+            host: arm-linux-androideabi
+            abi: armeabi-v7a
+          - kodi-branch: Nexus
+            host: aarch64-linux-android
+            abi: arm64-v8a
+          - kodi-branch: Omega
+            host: arm-linux-androideabi
+            abi: armeabi-v7a
+          - kodi-branch: Omega
+            host: aarch64-linux-android
+            abi: arm64-v8a
+          - kodi-branch: master
+            host: arm-linux-androideabi
+            abi: armeabi-v7a
+          - kodi-branch: master
+            host: aarch64-linux-android
+            abi: arm64-v8a
+
+    steps:
+      - name: Checkout Kodi Repository
+        uses: actions/checkout@v4
+        with:
+          repository: xbmc/xbmc
+          ref: ${{ matrix.kodi-branch }}
+          path: xbmc
+
+      - name: Checkout Add-on Repository
+        uses: actions/checkout@v4
+        with:
+          path: ${{ env.app_id }}
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y rapidjson-dev flatbuffers-compiler libflatbuffers-dev \
+            autoconf automake libtool pkg-config curl zip
+
+      - name: Setup Android NDK
+        uses: nttld/setup-ndk@v1
+        id: setup-ndk
+        with:
+          ndk-version: r26b
+          add-to-path: false
+
+      - name: Prepare Add-on Definition
+        shell: bash
+        run: |
+          mkdir -p "${{ github.workspace }}/xbmc/cmake/addons/addons/${{ env.app_id }}"
+          echo "${{ env.app_id }} ${{ github.workspace }}/${{ env.app_id }}" \
+            > "${{ github.workspace }}/xbmc/cmake/addons/addons/${{ env.app_id }}/${{ env.app_id }}.txt"
+
+      - name: Configure Kodi depends
+        shell: bash
+        run: |
+          cd "${{ github.workspace }}/xbmc/tools/depends"
+          ./configure \
+            --host=${{ matrix.host }} \
+            --with-toolchain=${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64 \
+            --api=21 \
+            --prefix="${{ github.workspace }}/kodi-deps"
+
+      - name: Build Kodi depends
+        shell: bash
+        run: |
+          cd "${{ github.workspace }}/xbmc/tools/depends"
+          make -j$(nproc)
+
+      - name: Configure CMake
+        shell: bash
+        run: |
+          TOOLCHAIN="${{ github.workspace }}/xbmc/tools/depends/target/toolchain/bin/${{ matrix.host }}-toolchain.cmake"
+          cmake \
+            -S "${{ github.workspace }}/xbmc/cmake/addons" \
+            -B "${{ env.app_id }}/build" \
+            -DCMAKE_TOOLCHAIN_FILE="$TOOLCHAIN" \
+            -DADDONS_TO_BUILD=${{ env.app_id }} \
+            -DADDON_SRC_PREFIX="${{ github.workspace }}" \
+            -DADDONS_DEFINITION_DIR="${{ github.workspace }}/xbmc/cmake/addons/addons" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="${{ github.workspace }}/kodi-install" \
+            -DPACKAGE_ZIP=ON \
+            -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+
+      - name: Build Add-on
+        run: cmake --build "${{ env.app_id }}/build" --parallel
+        shell: bash
+
+      - name: Package Add-on
+        shell: bash
+        run: |
+          ADDON_XML="${{ github.workspace }}/kodi-install/${{ env.app_id }}/addon.xml"
+          [ -f "$ADDON_XML" ] || { echo "missing addon.xml"; find "${{ github.workspace }}/kodi-install" -maxdepth 3; exit 1; }
+          ADDON_VERSION=$(ADDON_XML="$ADDON_XML" python3 -c "
+          import os, xml.etree.ElementTree as ET
+          print(ET.parse(os.environ['ADDON_XML']).getroot().attrib['version'])")
+          mkdir -p "${{ env.app_id }}/build/zips"
+          ZIP_PATH="${{ github.workspace }}/${{ env.app_id }}/build/zips/${{ env.app_id }}-${ADDON_VERSION}-android-${{ matrix.abi }}.zip"
+          cd "${{ github.workspace }}/kodi-install"
+          zip -r "$ZIP_PATH" "${{ env.app_id }}"
+
+      - name: Upload Zip Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pvr.ultimate-android-${{ matrix.kodi-branch }}-${{ matrix.abi }}
+          path: ${{ env.app_id }}/build/zips/*.zip
