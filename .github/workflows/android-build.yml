@@ -70,7 +70,9 @@ jobs:
       - name: Configure Kodi depends
         shell: bash
         run: |
+          set -ex
           cd "${{ github.workspace }}/xbmc/tools/depends"
+          ./bootstrap
           ./configure \
             --host=${{ matrix.host }} \
             --with-toolchain=${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64 \
