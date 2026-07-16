@@ -68,7 +68,13 @@ jobs:
 
       - name: Package Add-on
         run: |
-          cmake --build ${{ env.app_id }}/build --target addon-package
+          ADDON_VERSION=$(grep -oP '<addon[^>]*version="\K[^"]+' \
+            ${{ github.workspace }}/kodi-install/${{ env.app_id }}/addon.xml | head -1)
+          echo "Packaging ${{ env.app_id }} version $ADDON_VERSION"
+          mkdir -p ${{ env.app_id }}/build/zips
+          cd ${{ github.workspace }}/kodi-install
+          zip -r ${{ github.workspace }}/${{ env.app_id }}/build/zips/${{ env.app_id }}-${ADDON_VERSION}.zip ${{ env.app_id }}
+        shell: bash
 
       - name: Upload Zip Artifact
         uses: actions/upload-artifact@v4
