@@ -70,20 +70,20 @@ jobs:
         run: |
           ADDON_XML="${{ github.workspace }}/kodi-install/${{ env.app_id }}/addon.xml"
           if [ ! -f "$ADDON_XML" ]; then
-          echo "addon.xml not found at $ADDON_XML"
-          find "${{ github.workspace }}/kodi-install" -maxdepth 3
-          exit 1
+            echo "addon.xml not found at $ADDON_XML"
+            find "${{ github.workspace }}/kodi-install" -maxdepth 3
+            exit 1
           fi
           ADDON_VERSION=$(python3 -c "import xml.etree.ElementTree as ET; print(ET.parse('$ADDON_XML').getroot().attrib['version'])")
           if [ -z "$ADDON_VERSION" ]; then
-          echo "Could not extract version from addon.xml"
-          exit 1
+            echo "Could not extract version from addon.xml"
+            exit 1
           fi
           echo "Packaging ${{ env.app_id }} version $ADDON_VERSION"
           mkdir -p ${{ env.app_id }}/build/zips
           cd ${{ github.workspace }}/kodi-install
           zip -r ${{ github.workspace }}/${{ env.app_id }}/build/zips/${{ env.app_id }}-${ADDON_VERSION}.zip ${{ env.app_id }}
-          shell: bash
+        shell: bash
 
       - name: Upload Zip Artifact
         uses: actions/upload-artifact@v4
