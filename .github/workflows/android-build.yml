@@ -69,13 +69,16 @@ jobs:
 
       - name: Configure Kodi depends
         shell: bash
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+          ANDROID_NDK_ROOT: ${{ steps.setup-ndk.outputs.ndk-path }}
         run: |
           set -ex
           cd "${{ github.workspace }}/xbmc/tools/depends"
           ./bootstrap
           ./configure \
             --host=${{ matrix.host }} \
-            --with-toolchain=${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64 \
+            --with-toolchain=${ANDROID_NDK_HOME} \
             --prefix="${{ github.workspace }}/kodi-deps"
 
       - name: Build Kodi depends
