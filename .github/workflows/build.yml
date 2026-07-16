@@ -68,7 +68,7 @@ jobs:
 
       - name: Package Add-on
         run: |
-          cmake --build ${{ env.app_id }}/build --target package
+          cmake --build ${{ env.app_id }}/build --target addon-package
 
       - name: Upload Zip Artifact
         uses: actions/upload-artifact@v4
