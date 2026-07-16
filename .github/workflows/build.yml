@@ -27,11 +27,11 @@ jobs:
             kodi-branch: Omega
           - os: macos-latest
             kodi-branch: master
-          - os: windows-latest
+          - os: windows-2022
             kodi-branch: Nexus
-          - os: windows-latest
+          - os: windows-2022
             kodi-branch: Omega
-          - os: windows-latest
+          - os: windows-2022
             kodi-branch: master
 
     steps:
