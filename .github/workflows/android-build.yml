@@ -80,8 +80,10 @@ jobs:
           ./configure \
             --host=${{ matrix.host }} \
             --with-toolchain="${ANDROID_NDK_ROOT}/toolchains/llvm/prebuilt/linux-x86_64" \
+            --with-ndk-path="${ANDROID_NDK_ROOT}" \
+            --with-sdk-path="${ANDROID_HOME}" \
             --prefix="${{ github.workspace }}/kodi-deps" \
-            --enable-release
+            --disable-debug
 
       - name: Build Kodi depends
         shell: bash
