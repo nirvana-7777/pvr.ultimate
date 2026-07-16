@@ -79,16 +79,16 @@ jobs:
           ./bootstrap
           ./configure \
             --host=${{ matrix.host }} \
-            --with-ndk-path="${ANDROID_NDK_ROOT}" \
-            --with-sdk-path="${ANDROID_HOME}" \
             --with-toolchain="${ANDROID_NDK_ROOT}/toolchains/llvm/prebuilt/linux-x86_64" \
-            --prefix="${{ github.workspace }}/kodi-deps"
+            --prefix="${{ github.workspace }}/kodi-deps" \
+            --enable-release
 
       - name: Build Kodi depends
         shell: bash
         run: |
           cd "${{ github.workspace }}/xbmc/tools/depends"
-          make -j$(nproc)
+          # Use -j2 to avoid race conditions and memory spikes
+          make -j2
 
       - name: Configure CMake
         shell: bash
