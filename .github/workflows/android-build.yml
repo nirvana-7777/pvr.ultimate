@@ -71,7 +71,6 @@ jobs:
         shell: bash
         run: |
           set -ex
-          # Explicitly override the runner's broken NDK variables
           export ANDROID_NDK_ROOT="${{ steps.setup-ndk.outputs.ndk-path }}"
           export ANDROID_NDK_HOME="${{ steps.setup-ndk.outputs.ndk-path }}"
 
@@ -79,6 +78,8 @@ jobs:
           ./bootstrap
           ./configure \
             --host=${{ matrix.host }} \
+            --with-ndk-path="${ANDROID_NDK_ROOT}" \
+            --with-sdk-path="${ANDROID_HOME}" \
             --with-toolchain="${ANDROID_NDK_ROOT}/toolchains/llvm/prebuilt/linux-x86_64" \
             --prefix="${{ github.workspace }}/kodi-deps"
 
