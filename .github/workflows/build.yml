@@ -68,8 +68,18 @@ jobs:
 
       - name: Package Add-on
         run: |
-          ADDON_VERSION=$(grep -oP '<addon[^>]*version="\K[^"]+' \
-            ${{ github.workspace }}/kodi-install/${{ env.app_id }}/addon.xml | head -1)
+          ADDON_XML="${{ github.workspace }}/kodi-install/${{ env.app_id }}/addon.xml"
+          if [ ! -f "$ADDON_XML" ]; then
+            echo "addon.xml not found at $ADDON_XML"
+            find "${{ github.workspace }}/kodi-install" -maxdepth 3
+            exit 1
+          fi
+          ADDON_VERSION=$(sed -n 's/.*<addon[^>]*version="\([^"]*\)".*/\1/p' "$ADDON_XML" | head -1)
+          if [ -z "$ADDON_VERSION" ]; then
+            echo "Could not extract version from addon.xml:"
+            cat "$ADDON_XML"
+            exit 1
+          fi
           echo "Packaging ${{ env.app_id }} version $ADDON_VERSION"
           mkdir -p ${{ env.app_id }}/build/zips
           cd ${{ github.workspace }}/kodi-install
