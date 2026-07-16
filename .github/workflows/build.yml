@@ -107,8 +107,7 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_INSTALL_PREFIX="${{ github.workspace }}/kodi-install" \
             -DPACKAGE_ZIP=ON \
-            -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
-            -DCMAKE_PREFIX_PATH="$VCPKG_INSTALLATION_ROOT/installed/x64-windows"
+            -DCMAKE_POLICY_VERSION_MINIMUM=3.5
 
       - name: Build Add-on
         run: |
