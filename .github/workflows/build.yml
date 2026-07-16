@@ -66,7 +66,6 @@ jobs:
           echo "$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows\tools\flatbuffers" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
       - name: Prepare Add-on Definition
-        # This registers your local repository with Kodi's build system
         run: |
           mkdir -p "${{ github.workspace }}/xbmc/cmake/addons/addons/${{ env.app_id }}"
           echo "${{ env.app_id }} ${{ github.workspace }}/${{ env.app_id }}" > "${{ github.workspace }}/xbmc/cmake/addons/addons/${{ env.app_id }}/${{ env.app_id }}.txt"
@@ -129,7 +128,10 @@ jobs:
             PYTHON=python
           fi
 
-          ADDON_VERSION=$($PYTHON -c "import xml.etree.ElementTree as ET; print(ET.parse('$ADDON_XML').getroot().attrib['version'])")
+          ADDON_VERSION=$(ADDON_XML="$ADDON_XML" $PYTHON -c "
+          import os, xml.etree.ElementTree as ET
+          print(ET.parse(os.environ['ADDON_XML']).getroot().attrib['version'])
+          ")
           if [ -z "$ADDON_VERSION" ]; then
             echo "Could not extract version from addon.xml"
             exit 1
@@ -150,5 +152,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: pvr.ultimate-${{ runner.os }}-${{ matrix.kodi-branch }}
-          # The bootstrapper zips the output and deposits it into the build/zips directory
           path: ${{ env.app_id }}/build/zips/*.zip
