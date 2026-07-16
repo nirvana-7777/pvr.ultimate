@@ -76,7 +76,6 @@ jobs:
           ./configure \
             --host=${{ matrix.host }} \
             --with-toolchain=${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64 \
-            --api=21 \
             --prefix="${{ github.workspace }}/kodi-deps"
 
       - name: Build Kodi depends
