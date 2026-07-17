@@ -16,35 +16,127 @@ jobs:
       matrix:
         include:
           - kodi-branch: Nexus
-            host: aarch64-linux-android
+            host: arm-linux-androideabi
+            abi: armeabi-v7a
           - kodi-branch: Nexus
+            host: aarch64-linux-android
+            abi: arm64-v8a
+          - kodi-branch: Omega
             host: arm-linux-androideabi
+            abi: armeabi-v7a
           - kodi-branch: Omega
             host: aarch64-linux-android
-          - kodi-branch: Omega
+            abi: arm64-v8a
+          - kodi-branch: master
             host: arm-linux-androideabi
+            abi: armeabi-v7a
           - kodi-branch: master
             host: aarch64-linux-android
-          - kodi-branch: master
-            host: arm-linux-androideabi
+            abi: arm64-v8a
 
     steps:
+      - name: Checkout Kodi Repository
+        uses: actions/checkout@v4
+        with:
+          repository: xbmc/xbmc
+          ref: ${{ matrix.kodi-branch }}
+          path: xbmc
+
       - name: Checkout Add-on Repository
         uses: actions/checkout@v4
         with:
           path: ${{ env.app_id }}
 
-      - name: Build Add-on
-        uses: xbmc/action-build-addon@v2
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y rapidjson-dev flatbuffers-compiler libflatbuffers-dev \
+            autoconf automake libtool pkg-config curl zip gettext \
+            libcurl4-openssl-dev libssl-dev ccache
+
+      - name: Setup Android NDK
+        uses: nttld/setup-ndk@v1
+        id: setup-ndk
         with:
-          kodi_branch: ${{ matrix.kodi-branch }}
-          kodi_repo: xbmc/xbmc
-          addon_id: ${{ env.app_id }}
-          addon_path: ${{ github.workspace }}/${{ env.app_id }}
-          host: ${{ matrix.host }}
+          ndk-version: r26b
+          add-to-path: false
+
+      - name: Prepare Add-on Definition
+        shell: bash
+        run: |
+          mkdir -p "${{ github.workspace }}/xbmc/cmake/addons/addons/${{ env.app_id }}"
+          echo "${{ env.app_id }} ${{ github.workspace }}/${{ env.app_id }}" \
+            > "${{ github.workspace }}/xbmc/cmake/addons/addons/${{ env.app_id }}/${{ env.app_id }}.txt"
+
+      - name: Configure Kodi depends
+        shell: bash
+        run: |
+          set -ex
+          export ANDROID_NDK_ROOT="${{ steps.setup-ndk.outputs.ndk-path }}"
+          export ANDROID_NDK_HOME="${{ steps.setup-ndk.outputs.ndk-path }}"
+
+          cd "${{ github.workspace }}/xbmc/tools/depends"
+          ./bootstrap
+          ./configure \
+            --host=${{ matrix.host }} \
+            --with-toolchain="${ANDROID_NDK_ROOT}/toolchains/llvm/prebuilt/linux-x86_64" \
+            --with-ndk-path="${ANDROID_NDK_ROOT}" \
+            --with-sdk-path="${ANDROID_HOME}" \
+            --prefix="${{ github.workspace }}/kodi-deps" \
+            --disable-debug
+
+      - name: Build Kodi depends
+        shell: bash
+        run: |
+          cd "${{ github.workspace }}/xbmc/tools/depends"
+          # Use -j2 to avoid race conditions and memory spikes
+          make -j2
+
+      - name: Locate toolchain file
+        id: toolchain
+        shell: bash
+        run: |
+          set -ex
+          TOOLCHAIN_FILE=$(find "${{ github.workspace }}/kodi-deps" -name "Toolchain_binaddons.cmake" -print -quit)
+          if [ -z "$TOOLCHAIN_FILE" ]; then
+          echo "Toolchain file not found under kodi-deps"; exit 1
+          fi
+          echo "path=$TOOLCHAIN_FILE" >> "$GITHUB_OUTPUT"
+
+      - name: Configure CMake
+        shell: bash
+        run: |
+          cmake \
+            -S "${{ github.workspace }}/xbmc/cmake/addons" \
+            -B "${{ env.app_id }}/build" \
+            -DCMAKE_TOOLCHAIN_FILE="${{ steps.toolchain.outputs.path }}" \
+            -DADDONS_TO_BUILD=${{ env.app_id }} \
+            -DADDON_SRC_PREFIX="${{ github.workspace }}" \
+            -DADDONS_DEFINITION_DIR="${{ github.workspace }}/xbmc/cmake/addons/addons" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="${{ github.workspace }}/kodi-install" \
+            -DPACKAGE_ZIP=ON \
+            -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+
+      - name: Build Add-on
+        run: cmake --build "${{ env.app_id }}/build" --parallel
+        shell: bash
+
+      - name: Package Add-on
+        shell: bash
+        run: |
+          ADDON_XML="${{ github.workspace }}/kodi-install/${{ env.app_id }}/addon.xml"
+          [ -f "$ADDON_XML" ] || { echo "missing addon.xml"; find "${{ github.workspace }}/kodi-install" -maxdepth 3; exit 1; }
+          ADDON_VERSION=$(ADDON_XML="$ADDON_XML" python3 -c "
+          import os, xml.etree.ElementTree as ET
+          print(ET.parse(os.environ['ADDON_XML']).getroot().attrib['version'])")
+          mkdir -p "${{ env.app_id }}/build/zips"
+          ZIP_PATH="${{ github.workspace }}/${{ env.app_id }}/build/zips/${{ env.app_id }}-${ADDON_VERSION}-android-${{ matrix.abi }}.zip"
+          cd "${{ github.workspace }}/kodi-install"
+          zip -r "$ZIP_PATH" "${{ env.app_id }}"
 
       - name: Upload Zip Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: pvr.ultimate-android-${{ matrix.kodi-branch }}-${{ matrix.host }}
+          name: pvr.ultimate-android-${{ matrix.kodi-branch }}-${{ matrix.abi }}
           path: ${{ env.app_id }}/build/zips/*.zip
