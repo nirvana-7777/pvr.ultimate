@@ -5,9 +5,6 @@
   name="Ultimate PVR Client"
   provider-name="UltimatePVR">
   <requires>@ADDON_DEPENDS@
-  <import addon="kodi.binary.global.main" minversion="2.0.0" version="2.0.2"/>
-  <import addon="kodi.binary.global.general" minversion="1.0.4" version="1.0.5"/>
-  <import addon="kodi.binary.global.filesystem" minversion="1.1.7" version="1.1.9"/>
   <import addon="inputstream.adaptive" minversion="21.0.0"/>
   <import addon="kodi.binary.instance.pvr" minversion="9.2.0" version="9.2.0"/>
   </requires>
