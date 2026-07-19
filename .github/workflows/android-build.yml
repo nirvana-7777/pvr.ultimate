@@ -7,6 +7,7 @@ on:
 
 env:
   app_id: pvr.ultimate
+  ANDROID_HOME: /home/runner/android-sdk
 
 jobs:
   build:
@@ -35,7 +36,7 @@ jobs:
             abi: arm64-v8a
             ndk-version: r25c
 
-          # Piers (v22 Beta 1 Tag / Branch)
+          # Piers (v22 Beta 1 Tag)
           - kodi-branch: 22.0b1-Piers
             host: arm-linux-androideabi
             abi: armeabi-v7a
@@ -63,7 +64,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y rapidjson-dev flatbuffers-compiler libflatbuffers-dev \
             autoconf automake libtool pkg-config curl zip gettext \
-            libcurl4-openssl-dev libssl-dev ccache ninja-build cmake
+            libcurl4-openssl-dev libssl-dev ccache ninja-build cmake unzip
 
       - name: Setup Android NDK
         uses: nttld/setup-ndk@v1
@@ -72,20 +73,41 @@ jobs:
           ndk-version: ${{ matrix.ndk-version }}
           add-to-path: false
 
-      - name: Prepare Add-on Definition
-        shell: bash
+      - name: Cache Android SDK
+        id: cache-sdk
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.ANDROID_HOME }}
+          key: android-sdk-v11076708-api33
+          restore-keys: |
+            android-sdk-v11076708-
+
+      - name: Setup Android SDK
+        if: steps.cache-sdk.outputs.cache-hit != 'true'
         run: |
-          mkdir -p "${{ github.workspace }}/xbmc/cmake/addons/addons/${{ env.app_id }}"
-          echo "${{ env.app_id }} ${{ github.workspace }}/${{ env.app_id }}" \
-            > "${{ github.workspace }}/xbmc/cmake/addons/addons/${{ env.app_id }}/${{ env.app_id }}.txt"
+          mkdir -p ${{ env.ANDROID_HOME }}/cmdline-tools
+          cd ${{ env.ANDROID_HOME }}
+          wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+          unzip -q commandlinetools-linux-11076708_latest.zip -d cmdline-tools/
+          mv cmdline-tools/cmdline-tools cmdline-tools/latest
+          rm commandlinetools-linux-11076708_latest.zip
+          yes | ${{ env.ANDROID_HOME }}/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null 2>&1 || true
+          ${{ env.ANDROID_HOME }}/cmdline-tools/latest/bin/sdkmanager "platform-tools" "platforms;android-33" > /dev/null 2>&1 || true
+
+      - name: Cache Kodi Built Dependencies
+        id: cache-depends
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/kodi-deps
+          key: kodi-deps-${{ matrix.kodi-branch }}-${{ matrix.abi }}-${{ matrix.ndk-version }}-${{ hashFiles('xbmc/tools/depends/Makefile*') }}
 
       - name: Configure Kodi depends
+        if: steps.cache-depends.outputs.cache-hit != 'true'
         shell: bash
         run: |
           set -ex
           export ANDROID_NDK_ROOT="${{ steps.setup-ndk.outputs.ndk-path }}"
           export ANDROID_NDK_HOME="${{ steps.setup-ndk.outputs.ndk-path }}"
-          export ANDROID_HOME="${ANDROID_NDK_ROOT}"  # Add this
 
           cd "${{ github.workspace }}/xbmc/tools/depends"
           ./bootstrap
@@ -93,11 +115,12 @@ jobs:
             --host=${{ matrix.host }} \
             --with-toolchain="${ANDROID_NDK_ROOT}/toolchains/llvm/prebuilt/linux-x86_64" \
             --with-ndk-path="${ANDROID_NDK_ROOT}" \
-            --with-sdk-path="${ANDROID_HOME}" \
+            --with-sdk-path="${{ env.ANDROID_HOME }}" \
             --prefix="${{ github.workspace }}/kodi-deps" \
             --disable-debug
 
       - name: Build Kodi depends
+        if: steps.cache-depends.outputs.cache-hit != 'true'
         shell: bash
         run: |
           cd "${{ github.workspace }}/xbmc/tools/depends"
