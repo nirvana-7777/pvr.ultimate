@@ -15,24 +15,35 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Nexus (v20)
           - kodi-branch: Nexus
             host: arm-linux-androideabi
             abi: armeabi-v7a
+            ndk-version: r25c
           - kodi-branch: Nexus
             host: aarch64-linux-android
             abi: arm64-v8a
+            ndk-version: r25c
+
+          # Omega (v21)
           - kodi-branch: Omega
             host: arm-linux-androideabi
             abi: armeabi-v7a
+            ndk-version: r25c
           - kodi-branch: Omega
             host: aarch64-linux-android
             abi: arm64-v8a
-          - kodi-branch: master
+            ndk-version: r25c
+
+          # Piers (v22 Beta 1 Tag / Branch)
+          - kodi-branch: 22.0b1-Piers
             host: arm-linux-androideabi
             abi: armeabi-v7a
-          - kodi-branch: master
+            ndk-version: r26b
+          - kodi-branch: 22.0b1-Piers
             host: aarch64-linux-android
             abi: arm64-v8a
+            ndk-version: r26b
 
     steps:
       - name: Checkout Kodi Repository
@@ -52,13 +63,13 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y rapidjson-dev flatbuffers-compiler libflatbuffers-dev \
             autoconf automake libtool pkg-config curl zip gettext \
-            libcurl4-openssl-dev libssl-dev ccache
+            libcurl4-openssl-dev libssl-dev ccache ninja-build cmake
 
       - name: Setup Android NDK
         uses: nttld/setup-ndk@v1
         id: setup-ndk
         with:
-          ndk-version: r26b
+          ndk-version: ${{ matrix.ndk-version }}
           add-to-path: false
 
       - name: Prepare Add-on Definition
@@ -74,6 +85,7 @@ jobs:
           set -ex
           export ANDROID_NDK_ROOT="${{ steps.setup-ndk.outputs.ndk-path }}"
           export ANDROID_NDK_HOME="${{ steps.setup-ndk.outputs.ndk-path }}"
+          export ANDROID_HOME="${ANDROID_NDK_ROOT}"  # Add this
 
           cd "${{ github.workspace }}/xbmc/tools/depends"
           ./bootstrap
@@ -89,8 +101,7 @@ jobs:
         shell: bash
         run: |
           cd "${{ github.workspace }}/xbmc/tools/depends"
-          # Use -j2 to avoid race conditions and memory spikes
-          make -j2
+          make -j$(nproc)
 
       - name: Locate toolchain file
         id: toolchain
@@ -99,7 +110,7 @@ jobs:
           set -ex
           TOOLCHAIN_FILE=$(find "${{ github.workspace }}/kodi-deps" -name "Toolchain_binaddons.cmake" -print -quit)
           if [ -z "$TOOLCHAIN_FILE" ]; then
-          echo "Toolchain file not found under kodi-deps"; exit 1
+            echo "Toolchain file not found under kodi-deps"; exit 1
           fi
           echo "path=$TOOLCHAIN_FILE" >> "$GITHUB_OUTPUT"
 
@@ -107,6 +118,7 @@ jobs:
         shell: bash
         run: |
           cmake \
+            -G Ninja \
             -S "${{ github.workspace }}/xbmc/cmake/addons" \
             -B "${{ env.app_id }}/build" \
             -DCMAKE_TOOLCHAIN_FILE="${{ steps.toolchain.outputs.path }}" \
@@ -115,11 +127,10 @@ jobs:
             -DADDONS_DEFINITION_DIR="${{ github.workspace }}/xbmc/cmake/addons/addons" \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_INSTALL_PREFIX="${{ github.workspace }}/kodi-install" \
-            -DPACKAGE_ZIP=ON \
-            -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+            -DPACKAGE_ZIP=ON
 
       - name: Build Add-on
-        run: cmake --build "${{ env.app_id }}/build" --parallel
+        run: cmake --build "${{ env.app_id }}/build" --parallel $(nproc)
         shell: bash
 
       - name: Package Add-on
@@ -127,11 +138,14 @@ jobs:
         run: |
           ADDON_XML="${{ github.workspace }}/kodi-install/${{ env.app_id }}/addon.xml"
           [ -f "$ADDON_XML" ] || { echo "missing addon.xml"; find "${{ github.workspace }}/kodi-install" -maxdepth 3; exit 1; }
-          ADDON_VERSION=$(ADDON_XML="$ADDON_XML" python3 -c "
-          import os, xml.etree.ElementTree as ET
-          print(ET.parse(os.environ['ADDON_XML']).getroot().attrib['version'])")
+          
+          ADDON_VERSION=$(python3 -c "
+          import xml.etree.ElementTree as ET
+          print(ET.parse('$ADDON_XML').getroot().attrib['version'])")
+          
           mkdir -p "${{ env.app_id }}/build/zips"
           ZIP_PATH="${{ github.workspace }}/${{ env.app_id }}/build/zips/${{ env.app_id }}-${ADDON_VERSION}-android-${{ matrix.abi }}.zip"
+          
           cd "${{ github.workspace }}/kodi-install"
           zip -r "$ZIP_PATH" "${{ env.app_id }}"
 
