@@ -20,19 +20,19 @@ jobs:
           - os: ubuntu-latest
             kodi-branch: Omega
           - os: ubuntu-latest
-            kodi-branch: master
+            kodi-branch: 22.0b1-Piers
           - os: macos-latest
             kodi-branch: Nexus
           - os: macos-latest
             kodi-branch: Omega
           - os: macos-latest
-            kodi-branch: master
+            kodi-branch: 22.0b1-Piers
           - os: windows-2022
             kodi-branch: Nexus
           - os: windows-2022
             kodi-branch: Omega
           - os: windows-2022
-            kodi-branch: master
+            kodi-branch: 22.0b1-Piers
 
     steps:
       - name: Checkout Kodi Repository
