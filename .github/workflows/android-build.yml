@@ -94,6 +94,13 @@ jobs:
           yes | ${{ env.ANDROID_HOME }}/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null 2>&1 || true
           ${{ env.ANDROID_HOME }}/cmdline-tools/latest/bin/sdkmanager "platform-tools" "platforms;android-33" > /dev/null 2>&1 || true
 
+      - name: Prepare Add-on Definition
+        shell: bash
+        run: |
+          mkdir -p "${{ github.workspace }}/xbmc/cmake/addons/addons/${{ env.app_id }}"
+          echo "${{ env.app_id }} ${{ github.workspace }}/${{ env.app_id }}" \
+            > "${{ github.workspace }}/xbmc/cmake/addons/addons/${{ env.app_id }}/${{ env.app_id }}.txt"
+
       - name: Cache Kodi Built Dependencies
         id: cache-depends
         uses: actions/cache@v4
