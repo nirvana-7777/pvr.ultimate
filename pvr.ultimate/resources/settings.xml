@@ -42,17 +42,17 @@
         </category>
 
         <!-- NEW: EPG Service Settings -->
-        <category id="epg" label="EPG Service" help="">
-            <group id="3" label="EPG Source">
-                <setting id="epg_enabled" type="bool" label="Use Database EPG Service" help="Enable to use database EPG service instead of backend API">
+        <category id="epg" label="30064" help="">
+            <group id="3" label="30065">
+                <setting id="epg_enabled" type="bool" label="30060" help="30061">
                     <level>0</level>
                     <default>false</default>
                     <control type="toggle"/>
                 </setting>
-                <setting id="epg_service_url" type="string" label="EPG Service URL" help="URL of the database EPG service (e.g., http://localhost:8080)">
+                <setting id="epg_service_url" type="string" label="30062" help="30063">
                     <level>0</level>
                     <default>http://localhost:8080</default>
-                    <enable>eq(1)</enable>
+                    <enable>eq(epg_enabled,true)</enable>
                     <control type="edit" format="string"/>
                 </setting>
             </group>
