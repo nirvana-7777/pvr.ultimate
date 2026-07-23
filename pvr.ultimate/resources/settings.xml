@@ -44,7 +44,7 @@
         <!-- NEW: EPG Service Settings -->
         <category id="epg" label="30064" help="">
             <group id="3" label="30065">
-                <setting id="epg_enabled" type="bool" label="30060" help="30061">
+                <setting id="epg_enabled" type="boolean" label="30060" help="30061">
                     <level>0</level>
                     <default>false</default>
                     <control type="toggle"/>

@@ -83,3 +83,11 @@ msgstr "EPG Service URL"
 msgctxt "#30063"
 msgid "URL of the database EPG service (e.g., http://localhost:8080)"
 msgstr "URL of the database EPG service (e.g., http://localhost:8080)"
+
+msgctxt "#30064"
+msgid "EPG Service"
+msgstr ""
+
+msgctxt "#30065"
+msgid "EPG Settings"
+msgstr ""
