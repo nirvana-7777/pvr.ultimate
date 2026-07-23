@@ -18,7 +18,9 @@ CPVRUltimate::CPVRUltimate()
       m_maxRetries(10),
       m_retryDelayMs(2000),
       m_supportsPiggyback(false),
-      m_useModernDrm(false) {
+      m_useModernDrm(false),
+      m_useDatabaseEpg(false),
+      m_epgServiceUrl("http://localhost:8080") {
   kodi::Log(ADDON_LOG_INFO, "Ultimate PVR Client starting...");
 
   // Initialize managers
@@ -37,6 +39,12 @@ CPVRUltimate::CPVRUltimate()
   }
   m_maxRetries = kodi::addon::GetSettingInt("retry_attempts", 10);
   m_retryDelayMs = kodi::addon::GetSettingInt("retry_delay", 2000);
+
+  m_useDatabaseEpg = kodi::addon::GetSettingBoolean("epg_enabled", false);
+  {
+    std::lock_guard<std::mutex> lock(m_configMutex);
+    m_epgServiceUrl = kodi::addon::GetSettingString("epg_service_url", "http://localhost:8080");
+  }
 
   if (RetryBackendCall("initialization")) {
     DetectBackendCapabilities();
@@ -174,6 +182,17 @@ ADDON_STATUS CPVRUltimate::SetSetting(const std::string& settingName,
   else if (settingName == "retry_delay") {
     m_retryDelayMs = settingValue.GetInt();
     kodi::Log(ADDON_LOG_INFO, "Retry delay changed to: %dms", m_retryDelayMs.load());
+    return ADDON_STATUS_OK;
+  }
+  else if (settingName == "epg_enabled") {
+    m_useDatabaseEpg = settingValue.GetBoolean();
+    kodi::Log(ADDON_LOG_INFO, "Database EPG service enabled: %s", m_useDatabaseEpg.load() ? "true" : "false");
+    return ADDON_STATUS_OK;
+  }
+  else if (settingName == "epg_service_url") {
+    std::lock_guard<std::mutex> lock(m_configMutex);
+    m_epgServiceUrl = settingValue.GetString();
+    kodi::Log(ADDON_LOG_INFO, "EPG service URL changed to: %s", m_epgServiceUrl.c_str());
     return ADDON_STATUS_OK;
   }
 
@@ -634,8 +653,22 @@ PVR_ERROR CPVRUltimate::GetEPGForChannel(int channelUid, time_t start, time_t en
   auto getChannelByUid = [this](int uid, UltimateChannel& channel) -> bool {
     return m_channelManager->GetChannelByUid(uid, channel);
   };
+  // Builds a full URL against the EPG service host and performs the request directly,
+  // bypassing BuildApiUrl (which always targets the backend). The endpoint passed in by
+  // EPGManager already includes any versioning prefix (e.g. "/api/v1/..."), so this lambda
+  // does no path-rewriting of its own - it only owns scheme+host.
+  auto httpGetAbsolute = [this](const std::string& endpoint) -> std::string {
+    std::string baseUrl;
+    {
+      std::lock_guard<std::mutex> lock(m_configMutex);
+      baseUrl = m_epgServiceUrl;
+    }
+    if (!baseUrl.empty() && baseUrl.back() == '/') baseUrl.pop_back();
+    return this->HttpGet(baseUrl + endpoint);
+  };
 
-  m_epgManager->GetEPGForChannel(channelUid, start, end, httpGet, parseJson, getChannelByUid, results);
+  m_epgManager->GetEPGForChannel(channelUid, start, end, httpGet, parseJson, getChannelByUid,
+                                 results, httpGetAbsolute, m_useDatabaseEpg.load());
   return PVR_ERROR_NO_ERROR;
 }
 

@@ -89,6 +89,11 @@ private:
   std::atomic<bool> m_supportsPiggyback;
   std::atomic<bool> m_useModernDrm;
 
+  // EPG service settings (database EPG service, optional alternative to backend API)
+  // m_epgServiceUrl is guarded by m_configMutex, same as m_backendUrl.
+  std::atomic<bool> m_useDatabaseEpg;
+  std::string m_epgServiceUrl;
+
   // Managers
   std::unique_ptr<ProviderManager> m_providerManager;
   std::unique_ptr<ChannelManager> m_channelManager;

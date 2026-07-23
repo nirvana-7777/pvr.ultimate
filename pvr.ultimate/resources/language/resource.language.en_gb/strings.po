@@ -66,3 +66,20 @@ msgstr ""
 msgctxt "#30051"
 msgid "Delay in milliseconds between connection retry attempts (100-10000)"
 msgstr ""
+
+# EPG Settings
+msgctxt "#30060"
+msgid "Use Database EPG Service"
+msgstr "Use Database EPG Service"
+
+msgctxt "#30061"
+msgid "Enable to use database EPG service instead of backend API"
+msgstr "Enable to use database EPG service instead of backend API"
+
+msgctxt "#30062"
+msgid "EPG Service URL"
+msgstr "EPG Service URL"
+
+msgctxt "#30063"
+msgid "URL of the database EPG service (e.g., http://localhost:8080)"
+msgstr "URL of the database EPG service (e.g., http://localhost:8080)"

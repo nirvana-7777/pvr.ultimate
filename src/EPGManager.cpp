@@ -3,11 +3,75 @@
 #include <sstream>
 #include <ctime>
 
+// Shared parsing logic - single source of truth for EPG JSON -> PVREPGTag mapping.
+bool EPGManager::ParseEPGResponse(const std::string& response,
+                                   int channelUid,
+                                   const std::function<bool(const std::string&, rapidjson::Document&)>& parseJson,
+                                   kodi::addon::PVREPGTagsResultSet& results) {
+  rapidjson::Document document;
+  if (!parseJson(response, document)) return false;
+
+  if (!document.HasMember("epg") || !document["epg"].IsArray()) return false;
+
+  for (const auto& epgItem : document["epg"].GetArray()) {
+    kodi::addon::PVREPGTag tag;
+
+    uint64_t eStart = (epgItem.HasMember("start") && epgItem["start"].IsUint64()) ? epgItem["start"].GetUint64() : 0;
+    uint64_t eEnd = (epgItem.HasMember("end") && epgItem["end"].IsUint64()) ? epgItem["end"].GetUint64() : 0;
+
+    unsigned int broadcastId = static_cast<unsigned int>(channelUid ^ (eStart << 16) ^ (eStart >> 16) ^ eEnd);
+
+    tag.SetUniqueBroadcastId(broadcastId);
+    tag.SetUniqueChannelId(channelUid);
+    tag.SetStartTime(eStart);
+    tag.SetEndTime(eEnd);
+
+    if (epgItem.HasMember("title") && epgItem["title"].IsString())
+      tag.SetTitle(epgItem["title"].GetString());
+    if (epgItem.HasMember("plot") && epgItem["plot"].IsString())
+      tag.SetPlotOutline(epgItem["plot"].GetString());
+    if (epgItem.HasMember("description") && epgItem["description"].IsString())
+      tag.SetPlot(epgItem["description"].GetString());
+    if (epgItem.HasMember("icon") && epgItem["icon"].IsString())
+      tag.SetIconPath(epgItem["icon"].GetString());
+    if (epgItem.HasMember("genre") && epgItem["genre"].IsInt())
+      tag.SetGenreType(epgItem["genre"].GetInt());
+    if (epgItem.HasMember("episode_number") && epgItem["episode_number"].IsInt())
+      tag.SetEpisodeNumber(epgItem["episode_number"].GetInt());
+    if (epgItem.HasMember("season_number") && epgItem["season_number"].IsInt())
+      tag.SetSeriesNumber(epgItem["season_number"].GetInt());
+    if (epgItem.HasMember("episode_name") && epgItem["episode_name"].IsString())
+      tag.SetEpisodeName(epgItem["episode_name"].GetString());
+
+    results.Add(tag);
+  }
+  return true;
+}
+
+// Original signature - preserved for any other call sites, delegates to extended version.
 bool EPGManager::GetEPGForChannel(int channelUid, time_t start, time_t end,
                                   const std::function<std::string(const std::string&)>& httpGet,
                                   const std::function<bool(const std::string&, rapidjson::Document&)>& parseJson,
                                   const std::function<bool(int, UltimateChannel&)>& getChannelByUid,
                                   kodi::addon::PVREPGTagsResultSet& results) {
+  return GetEPGForChannel(channelUid, start, end, httpGet, parseJson, getChannelByUid,
+                          results, nullptr, false);
+}
+
+// Extended signature with optional database-EPG-service support.
+//
+// Contract for httpGetAbsolute: it receives a path that already starts with "/" and already
+// includes any versioning prefix (e.g. "/api/v1/providers/..."), and is expected to prepend
+// only scheme+host (m_epgServiceUrl) before making the request. It must NOT itself try to
+// detect/insert a version prefix - that logic belongs here, in one place, not split across
+// two layers (that split is what caused the double "/api/v1/api/v1/..." bug in an earlier draft).
+bool EPGManager::GetEPGForChannel(int channelUid, time_t start, time_t end,
+                                  const std::function<std::string(const std::string&)>& httpGet,
+                                  const std::function<bool(const std::string&, rapidjson::Document&)>& parseJson,
+                                  const std::function<bool(int, UltimateChannel&)>& getChannelByUid,
+                                  kodi::addon::PVREPGTagsResultSet& results,
+                                  const std::function<std::string(const std::string&)>& httpGetAbsolute,
+                                  bool useDatabaseEpg) {
   std::string provider, channelId, country;
   UltimateChannel channel;
 
@@ -16,53 +80,34 @@ bool EPGManager::GetEPGForChannel(int channelUid, time_t start, time_t end,
   channelId = channel.channelId;
   country = channel.country;
 
+  if (useDatabaseEpg && httpGetAbsolute) {
+    std::ostringstream dbUrl;
+    dbUrl << "/api/v1/providers/" << provider << "/channels/" << channelId << "/epg"
+          << "?start_time=" << start << "&end_time=" << end;
+
+    // Single call - httpGetAbsolute performs the request and returns the response body directly.
+    std::string dbResponse = httpGetAbsolute(dbUrl.str());
+
+    if (!dbResponse.empty()) {
+      if (ParseEPGResponse(dbResponse, channelUid, parseJson, results)) {
+        return true;
+      }
+      kodi::Log(ADDON_LOG_WARNING, "Database EPG parse failed for channel %d, falling back to backend", channelUid);
+    } else {
+      kodi::Log(ADDON_LOG_WARNING, "Database EPG empty response for channel %d, falling back to backend", channelUid);
+    }
+    // Falls through to the backend API path below.
+  }
+
   std::ostringstream url;
-  url << "/api/providers/" << provider
-      << "/channels/" << channelId << "/epg"
+  url << "/api/providers/" << provider << "/channels/" << channelId << "/epg"
       << "?start_time=" << start << "&end_time=" << end;
   if (!country.empty()) url << "&country=" << country;
 
   std::string response = httpGet(url.str());
   if (response.empty()) return false;
 
-  rapidjson::Document document;
-  if (!parseJson(response, document)) return false;
-
-  if (document.HasMember("epg") && document["epg"].IsArray()) {
-    for (const auto& epgItem : document["epg"].GetArray()) {
-      kodi::addon::PVREPGTag tag;
-
-      uint64_t eStart = (epgItem.HasMember("start") && epgItem["start"].IsUint64()) ? epgItem["start"].GetUint64() : 0;
-      uint64_t eEnd = (epgItem.HasMember("end") && epgItem["end"].IsUint64()) ? epgItem["end"].GetUint64() : 0;
-
-      unsigned int broadcastId = static_cast<unsigned int>(channelUid ^ (eStart << 16) ^ (eStart >> 16) ^ eEnd);
-
-      tag.SetUniqueBroadcastId(broadcastId);
-      tag.SetUniqueChannelId(channelUid);
-      tag.SetStartTime(eStart);
-      tag.SetEndTime(eEnd);
-
-      if (epgItem.HasMember("title") && epgItem["title"].IsString())
-        tag.SetTitle(epgItem["title"].GetString());
-      if (epgItem.HasMember("plot") && epgItem["plot"].IsString())
-        tag.SetPlotOutline(epgItem["plot"].GetString());
-      if (epgItem.HasMember("description") && epgItem["description"].IsString())
-        tag.SetPlot(epgItem["description"].GetString());
-      if (epgItem.HasMember("icon") && epgItem["icon"].IsString())
-        tag.SetIconPath(epgItem["icon"].GetString());
-      if (epgItem.HasMember("genre") && epgItem["genre"].IsInt())
-        tag.SetGenreType(epgItem["genre"].GetInt());
-      if (epgItem.HasMember("episode_number") && epgItem["episode_number"].IsInt())
-        tag.SetEpisodeNumber(epgItem["episode_number"].GetInt());
-      if (epgItem.HasMember("season_number") && epgItem["season_number"].IsInt())
-        tag.SetSeriesNumber(epgItem["season_number"].GetInt());
-      if (epgItem.HasMember("episode_name") && epgItem["episode_name"].IsString())
-        tag.SetEpisodeName(epgItem["episode_name"].GetString());
-
-      results.Add(tag);
-    }
-  }
-  return true;
+  return ParseEPGResponse(response, channelUid, parseJson, results);
 }
 
 bool EPGManager::IsEPGTagRecordable(const kodi::addon::PVREPGTag& tag, bool& isRecordable) {
