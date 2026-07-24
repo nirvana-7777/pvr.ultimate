@@ -694,8 +694,11 @@ PVR_ERROR CPVRUltimate::GetEPGTagStreamProperties(
     const kodi::addon::PVREPGTag& tag,
     std::vector<kodi::addon::PVRStreamProperty>& properties) {
 
-  auto httpGet = [this](const std::string& endpoint) -> std::string {
-    return this->HttpGet(this->BuildApiUrl(endpoint));
+  // Raw HttpGet - NOT wrapped with BuildApiUrl. getManifestUrl (below) already returns a
+  // fully-qualified URL (same as the live channel path), so wrapping it again here would
+  // double-prefix the scheme+host (e.g. "http://host:porthttp://host:port/api/...").
+  auto httpGet = [this](const std::string& url) -> std::string {
+    return this->HttpGet(url);
   };
   auto parseJson = [](const std::string& response, rapidjson::Document& doc) -> bool {
     return Utils::ParseJsonResponse(response, doc);
