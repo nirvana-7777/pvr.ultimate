@@ -2,6 +2,8 @@
 #include <kodi/General.h>
 #include <sstream>
 #include <ctime>
+#include <algorithm>
+#include <vector>
 
 // Shared parsing logic - single source of truth for EPG JSON -> PVREPGTag mapping.
 bool EPGManager::ParseEPGResponse(const std::string& response,
@@ -13,38 +15,127 @@ bool EPGManager::ParseEPGResponse(const std::string& response,
 
   if (!document.HasMember("epg") || !document["epg"].IsArray()) return false;
 
-  for (const auto& epgItem : document["epg"].GetArray()) {
+  struct ParsedTag {
     kodi::addon::PVREPGTag tag;
+    uint64_t start;
+    uint64_t end;
+    std::string title;
+  };
+  std::vector<ParsedTag> parsedTags;
+
+  for (const auto& epgItem : document["epg"].GetArray()) {
+    if (!epgItem.IsObject()) continue;
 
     uint64_t eStart = (epgItem.HasMember("start") && epgItem["start"].IsUint64()) ? epgItem["start"].GetUint64() : 0;
     uint64_t eEnd = (epgItem.HasMember("end") && epgItem["end"].IsUint64()) ? epgItem["end"].GetUint64() : 0;
 
+    // Backend occasionally sends malformed entries with zero or inverted timestamps
+    // (observed in live responses) - these are unusable for Kodi's EPG grid, skip them.
+    if (eStart == 0 || eEnd == 0 || eEnd <= eStart) continue;
+
+    kodi::addon::PVREPGTag tag;
     unsigned int broadcastId = static_cast<unsigned int>(channelUid ^ (eStart << 16) ^ (eStart >> 16) ^ eEnd);
 
     tag.SetUniqueBroadcastId(broadcastId);
     tag.SetUniqueChannelId(channelUid);
-    tag.SetStartTime(eStart);
-    tag.SetEndTime(eEnd);
+    tag.SetStartTime(static_cast<time_t>(eStart));
+    tag.SetEndTime(static_cast<time_t>(eEnd));
 
+    std::string title;
     if (epgItem.HasMember("title") && epgItem["title"].IsString())
-      tag.SetTitle(epgItem["title"].GetString());
-    if (epgItem.HasMember("plot") && epgItem["plot"].IsString())
-      tag.SetPlotOutline(epgItem["plot"].GetString());
-    if (epgItem.HasMember("description") && epgItem["description"].IsString())
-      tag.SetPlot(epgItem["description"].GetString());
-    if (epgItem.HasMember("icon") && epgItem["icon"].IsString())
-      tag.SetIconPath(epgItem["icon"].GetString());
+      title = epgItem["title"].GetString();
+    if (!title.empty())
+      tag.SetTitle(title);
+
+    // NOTE: verified against live curl output (magentaeu_at, 2026-07-24) that this
+    // endpoint only ever sends a single "plot" field - there is no separate
+    // "description" field. The previous mapping (plot -> SetPlotOutline,
+    // description -> SetPlot) meant SetPlot() was never actually called, so Kodi's
+    // Info dialog synopsis was silently empty for every program. We now map "plot"
+    // to both SetPlot (Info dialog) and SetPlotOutline (EPG grid blurb).
+    // If the backend ever starts sending a distinct "description" field for the
+    // full synopsis, split this back into two mappings.
+    if (epgItem.HasMember("plot") && epgItem["plot"].IsString()) {
+      std::string plot = epgItem["plot"].GetString();
+      if (!plot.empty()) {
+        tag.SetPlot(plot);
+        tag.SetPlotOutline(plot);
+      }
+    }
+
+    if (epgItem.HasMember("icon") && epgItem["icon"].IsString()) {
+      std::string icon = epgItem["icon"].GetString();
+      if (!icon.empty())
+        tag.SetIconPath(icon);
+    }
+
     if (epgItem.HasMember("genre") && epgItem["genre"].IsInt())
       tag.SetGenreType(epgItem["genre"].GetInt());
-    if (epgItem.HasMember("episode_number") && epgItem["episode_number"].IsInt())
-      tag.SetEpisodeNumber(epgItem["episode_number"].GetInt());
-    if (epgItem.HasMember("season_number") && epgItem["season_number"].IsInt())
-      tag.SetSeriesNumber(epgItem["season_number"].GetInt());
-    if (epgItem.HasMember("episode_name") && epgItem["episode_name"].IsString())
-      tag.SetEpisodeName(epgItem["episode_name"].GetString());
 
-    results.Add(tag);
+    // Only set season/episode numbers if they're valid (greater than 0)
+    if (epgItem.HasMember("season_number") && epgItem["season_number"].IsInt()) {
+      int seasonNum = epgItem["season_number"].GetInt();
+      if (seasonNum > 0)
+        tag.SetSeriesNumber(seasonNum);
+    }
+    if (epgItem.HasMember("episode_number") && epgItem["episode_number"].IsInt()) {
+      int episodeNum = epgItem["episode_number"].GetInt();
+      if (episodeNum > 0)
+        tag.SetEpisodeNumber(episodeNum);
+    }
+
+    if (epgItem.HasMember("episode_name") && epgItem["episode_name"].IsString()) {
+      std::string epName = epgItem["episode_name"].GetString();
+      if (!epName.empty())
+        tag.SetEpisodeName(epName);
+    }
+
+    parsedTags.push_back({std::move(tag), eStart, eEnd, std::move(title)});
   }
+
+  // De-duplication.
+  //
+  // IMPORTANT - this is not a simple "identical entry appears twice" bug. Live curl
+  // output for magentaeu_at/206963752351 shows the backend interleaving what look
+  // like two complete, internally self-consistent schedules for the same day,
+  // offset from each other by a few minutes per program (e.g. "Dennstein & Schwarz -
+  // Rufmord" appears as [09:38-11:06] and again as [09:45-11:15], both times paired
+  // with programs before/after that are themselves contiguous within their own
+  // chain). No two entries are byte-identical, so a plain sort+unique on
+  // start/end would not catch this - it has to be done via overlap detection.
+  //
+  // We do NOT know which of the two schedule versions is authoritative - that's a
+  // backend/provider question, not something to silently resolve on the client.
+  // Below, when a same-titled entry overlaps with the previously *kept* entry, we
+  // drop it and log a WARNING (rather than picking silently) so this is visible in
+  // logs. Default behavior keeps whichever version starts earlier after sorting -
+  // that is a reasonable default, not a verified-correct choice.
+  std::sort(parsedTags.begin(), parsedTags.end(),
+            [](const ParsedTag& a, const ParsedTag& b) { return a.start < b.start; });
+
+  uint64_t lastAcceptedEnd = 0;
+  std::string lastAcceptedTitle;
+  bool haveAccepted = false;
+
+  for (auto& pt : parsedTags) {
+    if (haveAccepted && !pt.title.empty() && pt.title == lastAcceptedTitle &&
+        pt.start < lastAcceptedEnd) {
+      kodi::Log(ADDON_LOG_WARNING,
+                "EPG dedup: dropping overlapping duplicate '%s' start=%llu end=%llu on "
+                "channel %d (kept earlier version ending at %llu) - two schedule "
+                "versions may be present in the feed, verify with backend which is "
+                "correct",
+                pt.title.c_str(), (unsigned long long)pt.start, (unsigned long long)pt.end,
+                channelUid, (unsigned long long)lastAcceptedEnd);
+      continue;
+    }
+
+    results.Add(pt.tag);
+    lastAcceptedEnd = pt.end;
+    lastAcceptedTitle = pt.title;
+    haveAccepted = true;
+  }
+
   return true;
 }
 
