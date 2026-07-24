@@ -110,14 +110,23 @@ bool EPGManager::ParseEPGResponse(const std::string& response,
   // drop it and log a WARNING (rather than picking silently) so this is visible in
   // logs. Default behavior keeps whichever version starts earlier after sorting -
   // that is a reasonable default, not a verified-correct choice.
-  std::sort(parsedTags.begin(), parsedTags.end(),
-            [](const ParsedTag& a, const ParsedTag& b) { return a.start < b.start; });
+  // Sort indices rather than the ParsedTag structs themselves: kodi::addon::PVREPGTag
+  // (a CStructHdl wrapper around a C struct handle) is not move-assignable, which makes
+  // ParsedTag itself non-move-assignable, which std::sort on the structs directly needs.
+  // Sorting plain size_t indices sidesteps that entirely - parsedTags never gets reordered
+  // in place, we just read it through the sorted index order below.
+  std::vector<size_t> order(parsedTags.size());
+  for (size_t i = 0; i < order.size(); ++i) order[i] = i;
+  std::sort(order.begin(), order.end(), [&parsedTags](size_t a, size_t b) {
+    return parsedTags[a].start < parsedTags[b].start;
+  });
 
   uint64_t lastAcceptedEnd = 0;
   std::string lastAcceptedTitle;
   bool haveAccepted = false;
 
-  for (auto& pt : parsedTags) {
+  for (size_t idx : order) {
+    ParsedTag& pt = parsedTags[idx];
     if (haveAccepted && !pt.title.empty() && pt.title == lastAcceptedTitle &&
         pt.start < lastAcceptedEnd) {
       kodi::Log(ADDON_LOG_WARNING,
