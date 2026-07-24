@@ -556,40 +556,44 @@ PVR_ERROR CPVRUltimate::GetChannelStreamProperties(
   properties.emplace_back(PVR_STREAM_PROPERTY_STREAMURL, manifestUrl);
 
   ApplyDRMProperties(properties, provider, channelId, useCdm, drmConfigsBase64);
+  ApplyStreamHeaders(properties, streamHeadersBase64);
 
-  if (!streamHeadersBase64.empty()) {
-    std::string decodedHeaders = Utils::Base64Decode(streamHeadersBase64);
-    if (!decodedHeaders.empty()) {
-      rapidjson::Document headersDoc;
-      if (Utils::ParseJsonResponse(decodedHeaders, headersDoc) && headersDoc.IsObject()) {
-        if (headersDoc.HasMember("manifest") && headersDoc["manifest"].IsObject()) {
-          std::string manifestHeaders;
-          for (auto it = headersDoc["manifest"].MemberBegin(); it != headersDoc["manifest"].MemberEnd(); ++it) {
-            if (!manifestHeaders.empty()) manifestHeaders += "&";
-            manifestHeaders += it->name.GetString();
-            manifestHeaders += "=";
-            manifestHeaders += Utils::UrlEncode(it->value.GetString());
-          }
-          if (!manifestHeaders.empty()) {
-            properties.emplace_back("inputstream.adaptive.manifest_headers", manifestHeaders);
-          }
-        }
-        if (headersDoc.HasMember("segment") && headersDoc["segment"].IsObject()) {
-          std::string segmentHeaders;
-          for (auto it = headersDoc["segment"].MemberBegin(); it != headersDoc["segment"].MemberEnd(); ++it) {
-            if (!segmentHeaders.empty()) segmentHeaders += "&";
-            segmentHeaders += it->name.GetString();
-            segmentHeaders += "=";
-            segmentHeaders += Utils::UrlEncode(it->value.GetString());
-          }
-          if (!segmentHeaders.empty()) {
-            properties.emplace_back("inputstream.adaptive.stream_headers", segmentHeaders);
-          }
-        }
-      }
+  return PVR_ERROR_NO_ERROR;
+}
+
+void CPVRUltimate::ApplyStreamHeaders(std::vector<kodi::addon::PVRStreamProperty>& properties,
+                                      const std::string& streamHeadersBase64) {
+  if (streamHeadersBase64.empty()) return;
+
+  std::string decodedHeaders = Utils::Base64Decode(streamHeadersBase64);
+  if (decodedHeaders.empty()) return;
+
+  rapidjson::Document headersDoc;
+  if (!Utils::ParseJsonResponse(decodedHeaders, headersDoc) || !headersDoc.IsObject()) return;
+
+  auto buildHeaderString = [](const rapidjson::Value& obj) -> std::string {
+    std::string result;
+    for (auto it = obj.MemberBegin(); it != obj.MemberEnd(); ++it) {
+      if (!result.empty()) result += "&";
+      result += it->name.GetString();
+      result += "=";
+      result += Utils::UrlEncode(it->value.GetString());
+    }
+    return result;
+  };
+
+  if (headersDoc.HasMember("manifest") && headersDoc["manifest"].IsObject()) {
+    std::string manifestHeaders = buildHeaderString(headersDoc["manifest"]);
+    if (!manifestHeaders.empty()) {
+      properties.emplace_back("inputstream.adaptive.manifest_headers", manifestHeaders);
     }
   }
-  return PVR_ERROR_NO_ERROR;
+  if (headersDoc.HasMember("segment") && headersDoc["segment"].IsObject()) {
+    std::string segmentHeaders = buildHeaderString(headersDoc["segment"]);
+    if (!segmentHeaders.empty()) {
+      properties.emplace_back("inputstream.adaptive.stream_headers", segmentHeaders);
+    }
+  }
 }
 
 // ============================================================================
@@ -708,19 +712,32 @@ PVR_ERROR CPVRUltimate::GetEPGTagStreamProperties(
   auto retryBackendCall = [this](const std::string& op) -> bool {
     return this->RetryBackendCall(op);
   };
+  auto getManifestUrl = [this](const std::string& provider, const std::string& channelId) -> std::string {
+    return this->GetManifestUrl(provider, channelId);
+  };
+  auto httpGetWithHeaders = [this](const std::string& url, std::string& response,
+                                    std::string& drmConfigs, std::string& headers) -> bool {
+    return this->HttpGetWithHeaders(url, response, drmConfigs, headers);
+  };
 
-  bool result = m_epgManager->GetEPGTagStreamProperties(tag, properties, httpGet, parseJson,
-                                                         getChannelInfo, getChannelByUid,
-                                                         isBackendAvailable, retryBackendCall);
+  std::string drmConfigsBase64, streamHeadersBase64;
+
+  bool result = m_epgManager->GetEPGTagStreamProperties(
+      tag, properties, httpGet, parseJson, getChannelInfo, getChannelByUid,
+      isBackendAvailable, retryBackendCall, getManifestUrl, httpGetWithHeaders,
+      m_supportsPiggyback.load(), drmConfigsBase64, streamHeadersBase64);
 
   if (!result) return PVR_ERROR_SERVER_ERROR;
 
-  // Apply DRM properties if needed
+  // Apply DRM and stream headers exactly as the live channel path does: drmConfigsBase64 /
+  // streamHeadersBase64 come from the manifest response when piggyback is supported, otherwise
+  // ApplyDRMProperties falls back to a separate /drm lookup via useCdm.
   int channelUid = tag.GetUniqueChannelId();
   UltimateChannel channel;
   if (m_channelManager->GetChannelByUid(channelUid, channel)) {
-    ApplyDRMProperties(properties, channel.provider, channel.channelId, channel.useCdm, "");
+    ApplyDRMProperties(properties, channel.provider, channel.channelId, channel.useCdm, drmConfigsBase64);
   }
+  ApplyStreamHeaders(properties, streamHeadersBase64);
 
   return PVR_ERROR_NO_ERROR;
 }

@@ -134,4 +134,10 @@ private:
                           const std::string& provider, const std::string& channelId,
                           bool useCdm, const std::string& drmConfigsBase64,
                           bool isRecording = false);
+
+  // Decodes streamHeadersBase64 (the "stream_headers_base64" field from a manifest response)
+  // and applies inputstream.adaptive.manifest_headers / .stream_headers properties. Shared by
+  // the live channel path and the EPG catchup path so header-parsing logic exists in one place.
+  static void ApplyStreamHeaders(std::vector<kodi::addon::PVRStreamProperty>& properties,
+                                 const std::string& streamHeadersBase64);
 };

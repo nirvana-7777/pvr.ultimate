@@ -31,6 +31,15 @@ public:
     static bool IsEPGTagPlayable(const kodi::addon::PVREPGTag& tag, bool& isPlayable,
                           const std::function<bool(int, std::string&, std::string&, int&)>& getChannelInfo);
 
+    // Fetches the channel manifest (same endpoint/contract as live playback) and builds the
+    // catchup stream URL from the backend-provided catchup_stream_url_template, substituting
+    // {start_time}/{end_time} (always required) and {epg_id}/{country} (only if the template
+    // actually contains those placeholders - the template is the single source of truth for
+    // what the backend needs, the client does not decide which params to send).
+    //
+    // On success, drmConfigsBase64/streamHeadersBase64 are populated from the manifest response
+    // (only when supportsPiggyback is true) so the caller can apply DRM and stream headers via
+    // the same ApplyDRMProperties/ApplyStreamHeaders path used for live channels.
     static bool GetEPGTagStreamProperties(const kodi::addon::PVREPGTag& tag,
                                           std::vector<kodi::addon::PVRStreamProperty>& properties,
                                           const std::function<std::string(const std::string&)>& httpGet,
@@ -38,7 +47,12 @@ public:
                                           const std::function<bool(int, std::string&, std::string&, int&)>& getChannelInfo,
                                           const std::function<bool(int, UltimateChannel&)>& getChannelByUid,
                                           const std::function<bool()>& isBackendAvailable,
-                                          const std::function<bool(const std::string&)>& retryBackendCall);
+                                          const std::function<bool(const std::string&)>& retryBackendCall,
+                                          const std::function<std::string(const std::string&, const std::string&)>& getManifestUrl,
+                                          const std::function<bool(const std::string&, std::string&, std::string&, std::string&)>& httpGetWithHeaders,
+                                          bool supportsPiggyback,
+                                          std::string& drmConfigsBase64,
+                                          std::string& streamHeadersBase64);
 
 private:
     // Shared parsing logic - single source of truth for EPG JSON -> PVREPGTag mapping.

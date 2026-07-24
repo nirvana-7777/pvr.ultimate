@@ -145,50 +145,94 @@ bool EPGManager::GetEPGTagStreamProperties(const kodi::addon::PVREPGTag& tag,
                                            const std::function<bool(int, std::string&, std::string&, int&)>& getChannelInfo,
                                            const std::function<bool(int, UltimateChannel&)>& getChannelByUid,
                                            const std::function<bool()>& isBackendAvailable,
-                                           const std::function<bool(const std::string&)>& retryBackendCall) {
+                                           const std::function<bool(const std::string&)>& retryBackendCall,
+                                           const std::function<std::string(const std::string&, const std::string&)>& getManifestUrl,
+                                           const std::function<bool(const std::string&, std::string&, std::string&, std::string&)>& httpGetWithHeaders,
+                                           bool supportsPiggyback,
+                                           std::string& drmConfigsBase64,
+                                           std::string& streamHeadersBase64) {
   int channelUid = tag.GetUniqueChannelId();
   unsigned int broadcastId = tag.GetUniqueBroadcastId();
   std::string provider, channelId;
   int catchupHours = 0;
 
+  drmConfigsBase64.clear();
+  streamHeadersBase64.clear();
+
   if (!getChannelInfo(channelUid, provider, channelId, catchupHours)) return false;
   if (catchupHours <= 0) return false;
 
+  UltimateChannel channel;
+  if (!getChannelByUid(channelUid, channel)) return false;
+
   if (!isBackendAvailable() && !retryBackendCall("EPG stream playback")) return false;
 
-  std::ostringstream streamApiUrl;
-  streamApiUrl << "/api/providers/" << provider
-               << "/channels/" << channelId << "/stream"
-               << "?start_time=" << tag.GetStartTime()
-               << "&end_time=" << tag.GetEndTime()
-               << "&epg_id=" << broadcastId;
+  // Same manifest endpoint/contract as live playback - the backend, not the client,
+  // decides the catchup URL shape via catchup_stream_url_template below.
+  std::string manifestApiUrl = getManifestUrl(provider, channelId);
 
-  UltimateChannel channel;
-  if (getChannelByUid(channelUid, channel)) {
-    bool useCdm = false;
-    useCdm = channel.useCdm;
-    if (!channel.country.empty()) streamApiUrl << "&country=" << channel.country;
+  std::string response;
+  if (supportsPiggyback) {
+    if (!httpGetWithHeaders(manifestApiUrl, response, drmConfigsBase64, streamHeadersBase64)) {
+      return false;
+    }
+  } else {
+    response = httpGet(manifestApiUrl);
+    if (response.empty()) return false;
   }
-
-  std::string response = httpGet(streamApiUrl.str());
-  if (response.empty()) return false;
 
   rapidjson::Document document;
-  std::string manifestUrl;
-  if (parseJson(response, document) && document.IsObject()) {
-    if (document.HasMember("manifest_url") && document["manifest_url"].IsString()) {
-      manifestUrl = document["manifest_url"].GetString();
-    } else return false;
-  } else {
-    manifestUrl = streamApiUrl.str();
+  if (!parseJson(response, document) || !document.IsObject()) return false;
+
+  if (!document.HasMember("catchup_stream_url_template") ||
+      !document["catchup_stream_url_template"].IsString()) {
+    kodi::Log(ADDON_LOG_WARNING,
+              "No catchup_stream_url_template in manifest for %s/%s; channel reports "
+              "catchup support (catchupHours=%d) but backend did not provide a template",
+              provider.c_str(), channelId.c_str(), catchupHours);
+    return false;
   }
 
+  std::string streamUrl = document["catchup_stream_url_template"].GetString();
+
+  auto hasPlaceholder = [&streamUrl](const std::string& placeholder) {
+    return streamUrl.find(placeholder) != std::string::npos;
+  };
+  auto substitute = [&streamUrl](const std::string& placeholder, const std::string& value) {
+    size_t pos = streamUrl.find(placeholder);
+    if (pos != std::string::npos) streamUrl.replace(pos, placeholder.length(), value);
+  };
+
+  // start_time/end_time are mandatory - a template without them isn't usable for catchup.
+  if (!hasPlaceholder("{start_time}") || !hasPlaceholder("{end_time}")) {
+    kodi::Log(ADDON_LOG_WARNING,
+              "catchup_stream_url_template for %s/%s missing {start_time}/{end_time} "
+              "placeholder(s): %s",
+              provider.c_str(), channelId.c_str(), streamUrl.c_str());
+    return false;
+  }
+
+  // epg_id/country are only sent when the template asks for them. If the template requires
+  // {country} but we have none for this channel, that's a data problem worth surfacing rather
+  // than silently leaving the literal placeholder in the URL.
+  if (hasPlaceholder("{country}") && channel.country.empty()) {
+    kodi::Log(ADDON_LOG_WARNING,
+              "catchup_stream_url_template for %s/%s requires {country} but channel has none set",
+              provider.c_str(), channelId.c_str());
+    return false;
+  }
+
+  substitute("{start_time}", std::to_string(tag.GetStartTime()));
+  substitute("{end_time}", std::to_string(tag.GetEndTime()));
+  substitute("{epg_id}", std::to_string(broadcastId));
+  if (hasPlaceholder("{country}")) substitute("{country}", channel.country);
+
   properties.emplace_back(PVR_STREAM_PROPERTY_INPUTSTREAM, "inputstream.adaptive");
-  properties.emplace_back(PVR_STREAM_PROPERTY_STREAMURL, manifestUrl);
+  properties.emplace_back(PVR_STREAM_PROPERTY_STREAMURL, streamUrl);
   properties.emplace_back("inputstream.adaptive.play_timeshift_buffer", "false");
 
-  // DRM properties need to be applied by caller
-  // This will be handled by PVRUltimate::ApplyDRMProperties
+  // DRM (drmConfigsBase64) and stream headers (streamHeadersBase64) are applied by the caller
+  // via ApplyDRMProperties/ApplyStreamHeaders, same as the live channel path.
 
   return true;
 }
