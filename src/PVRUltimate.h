@@ -10,9 +10,11 @@
 #include <memory>
 #include <atomic>
 #include <mutex>
+#include <thread>
+#include <condition_variable>
 
-// Forward declare rapidjson types to avoid including in header
-#include "rapidjson/document.h"
+// Forward declare nlohmann types to avoid a heavier include in the header
+#include <nlohmann/json.hpp>
 
 class ATTR_DLL_LOCAL CPVRUltimate : public kodi::addon::CAddonBase,
                                      public kodi::addon::CInstancePVRClient {
@@ -81,6 +83,10 @@ private:
   // Configuration
   std::string m_backendUrl;
   int m_backendPort;
+  std::string m_apiKey;         // sent as "Authorization: Bearer <key>" - restored, was dropped
+                                 // entirely in the rapidjson migration (no member, no SetSetting
+                                 // handling, no header ever sent).
+  std::string m_customHeaders;  // raw "|"-joined extra header string, restored for the same reason.
   std::mutex m_configMutex;
 
   std::atomic<bool> m_backendAvailable;
@@ -94,6 +100,24 @@ private:
   std::atomic<bool> m_useDatabaseEpg;
   std::string m_epgServiceUrl;
 
+  // Background initialization. Backend discovery + all initial data loads run
+  // on m_initThread so a slow/unreachable backend cannot block Kodi's PVR
+  // client construction (which has its own watchdog timeout and can mark the
+  // addon broken if Create() doesn't return promptly). m_initialized gates
+  // every public accessor below until the first load completes; the
+  // destructor signals m_stopInit and joins the thread so no callback fires
+  // into a partially-destroyed object.
+  std::thread m_initThread;
+  std::atomic<bool> m_stopInit{false};
+  std::atomic<bool> m_initRunning{false};
+  std::atomic<bool> m_initialized{false};
+  std::condition_variable m_initCv;
+  std::mutex m_initMutex;
+
+  void InitializeAsync();
+  void EnsureInitThreadStopped();
+  bool IsReady() const { return m_initialized.load() && m_backendAvailable.load(); }
+
   // Managers
   std::unique_ptr<ProviderManager> m_providerManager;
   std::unique_ptr<ChannelManager> m_channelManager;
@@ -102,19 +126,19 @@ private:
   std::unique_ptr<TimerManager> m_timerManager;
 
   // HTTP methods
-  static std::string HttpGet(const std::string& url);
+  std::string HttpGet(const std::string& url);
 
-  static bool HttpGetWithHeaders(const std::string& url,
-                                 std::string& response,
-                                 std::string& drmConfigsBase64,
-                                 std::string& streamHeadersBase64);
+  bool HttpGetWithHeaders(const std::string& url,
+                          std::string& response,
+                          std::string& drmConfigsBase64,
+                          std::string& streamHeadersBase64);
 
-  static bool HttpDelete(const std::string& url);
+  bool HttpDelete(const std::string& url);
 
-  static bool HttpPost(const std::string& url, const std::string& body);
+  bool HttpPost(const std::string& url, const std::string& body);
 
-  static bool HttpPut(const std::string& url, const std::string& body);
-  static std::string HttpSendRequest(const std::string& url, const std::string& method, const std::string& body);
+  bool HttpPut(const std::string& url, const std::string& body);
+  std::string HttpSendRequest(const std::string& url, const std::string& method, const std::string& body);
 
   // Core methods
   bool RetryBackendCall(const std::string& operationName);
@@ -127,7 +151,7 @@ private:
   // DRM methods
   DRMConfig GetDRMConfig(const std::string& provider, const std::string& channelId,
                         bool isRecording = false);
-  rapidjson::Document GetDRMConfigJson(const std::string& provider, const std::string& channelId,
+  nlohmann::json GetDRMConfigJson(const std::string& provider, const std::string& channelId,
                                        bool isRecording = false);
   std::string GetManifestUrl(const std::string& provider, const std::string& channelId);
   void ApplyDRMProperties(std::vector<kodi::addon::PVRStreamProperty>& properties,

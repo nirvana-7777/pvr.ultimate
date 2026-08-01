@@ -1,4 +1,5 @@
 #include "EPGManager.h"
+#include "Utils.h"
 #include <kodi/General.h>
 #include <sstream>
 #include <ctime>
@@ -8,12 +9,12 @@
 // Shared parsing logic - single source of truth for EPG JSON -> PVREPGTag mapping.
 bool EPGManager::ParseEPGResponse(const std::string& response,
                                    int channelUid,
-                                   const std::function<bool(const std::string&, rapidjson::Document&)>& parseJson,
+                                   const std::function<bool(const std::string&, nlohmann::json&)>& parseJson,
                                    kodi::addon::PVREPGTagsResultSet& results) {
-  rapidjson::Document document;
+  nlohmann::json document;
   if (!parseJson(response, document)) return false;
 
-  if (!document.HasMember("epg") || !document["epg"].IsArray()) return false;
+  if (!document.contains("epg") || !document["epg"].is_array()) return false;
 
   struct ParsedTag {
     kodi::addon::PVREPGTag tag;
@@ -23,11 +24,11 @@ bool EPGManager::ParseEPGResponse(const std::string& response,
   };
   std::vector<ParsedTag> parsedTags;
 
-  for (const auto& epgItem : document["epg"].GetArray()) {
-    if (!epgItem.IsObject()) continue;
+  for (const auto& epgItem : document["epg"]) {
+    if (!epgItem.is_object()) continue;
 
-    uint64_t eStart = (epgItem.HasMember("start") && epgItem["start"].IsUint64()) ? epgItem["start"].GetUint64() : 0;
-    uint64_t eEnd = (epgItem.HasMember("end") && epgItem["end"].IsUint64()) ? epgItem["end"].GetUint64() : 0;
+    uint64_t eStart = (epgItem.contains("start") && epgItem["start"].is_number_integer()) ? epgItem["start"].get<uint64_t>() : 0;
+    uint64_t eEnd = (epgItem.contains("end") && epgItem["end"].is_number_integer()) ? epgItem["end"].get<uint64_t>() : 0;
 
     // Backend occasionally sends malformed entries with zero or inverted timestamps
     // (observed in live responses) - these are unusable for Kodi's EPG grid, skip them.
@@ -42,8 +43,8 @@ bool EPGManager::ParseEPGResponse(const std::string& response,
     tag.SetEndTime(static_cast<time_t>(eEnd));
 
     std::string title;
-    if (epgItem.HasMember("title") && epgItem["title"].IsString())
-      title = epgItem["title"].GetString();
+    if (epgItem.contains("title") && epgItem["title"].is_string())
+      title = epgItem["title"].get<std::string>();
     if (!title.empty())
       tag.SetTitle(title);
 
@@ -55,37 +56,37 @@ bool EPGManager::ParseEPGResponse(const std::string& response,
     // to both SetPlot (Info dialog) and SetPlotOutline (EPG grid blurb).
     // If the backend ever starts sending a distinct "description" field for the
     // full synopsis, split this back into two mappings.
-    if (epgItem.HasMember("plot") && epgItem["plot"].IsString()) {
-      std::string plot = epgItem["plot"].GetString();
+    if (epgItem.contains("plot") && epgItem["plot"].is_string()) {
+      std::string plot = epgItem["plot"].get<std::string>();
       if (!plot.empty()) {
         tag.SetPlot(plot);
         tag.SetPlotOutline(plot);
       }
     }
 
-    if (epgItem.HasMember("icon") && epgItem["icon"].IsString()) {
-      std::string icon = epgItem["icon"].GetString();
+    if (epgItem.contains("icon") && epgItem["icon"].is_string()) {
+      std::string icon = epgItem["icon"].get<std::string>();
       if (!icon.empty())
         tag.SetIconPath(icon);
     }
 
-    if (epgItem.HasMember("genre") && epgItem["genre"].IsInt())
-      tag.SetGenreType(epgItem["genre"].GetInt());
+    if (epgItem.contains("genre") && epgItem["genre"].is_number_integer())
+      tag.SetGenreType(epgItem["genre"].get<int>());
 
     // Only set season/episode numbers if they're valid (greater than 0)
-    if (epgItem.HasMember("season_number") && epgItem["season_number"].IsInt()) {
-      int seasonNum = epgItem["season_number"].GetInt();
+    if (epgItem.contains("season_number") && epgItem["season_number"].is_number_integer()) {
+      int seasonNum = epgItem["season_number"].get<int>();
       if (seasonNum > 0)
         tag.SetSeriesNumber(seasonNum);
     }
-    if (epgItem.HasMember("episode_number") && epgItem["episode_number"].IsInt()) {
-      int episodeNum = epgItem["episode_number"].GetInt();
+    if (epgItem.contains("episode_number") && epgItem["episode_number"].is_number_integer()) {
+      int episodeNum = epgItem["episode_number"].get<int>();
       if (episodeNum > 0)
         tag.SetEpisodeNumber(episodeNum);
     }
 
-    if (epgItem.HasMember("episode_name") && epgItem["episode_name"].IsString()) {
-      std::string epName = epgItem["episode_name"].GetString();
+    if (epgItem.contains("episode_name") && epgItem["episode_name"].is_string()) {
+      std::string epName = epgItem["episode_name"].get<std::string>();
       if (!epName.empty())
         tag.SetEpisodeName(epName);
     }
@@ -151,7 +152,7 @@ bool EPGManager::ParseEPGResponse(const std::string& response,
 // Original signature - preserved for any other call sites, delegates to extended version.
 bool EPGManager::GetEPGForChannel(int channelUid, time_t start, time_t end,
                                   const std::function<std::string(const std::string&)>& httpGet,
-                                  const std::function<bool(const std::string&, rapidjson::Document&)>& parseJson,
+                                  const std::function<bool(const std::string&, nlohmann::json&)>& parseJson,
                                   const std::function<bool(int, UltimateChannel&)>& getChannelByUid,
                                   kodi::addon::PVREPGTagsResultSet& results) {
   return GetEPGForChannel(channelUid, start, end, httpGet, parseJson, getChannelByUid,
@@ -167,7 +168,7 @@ bool EPGManager::GetEPGForChannel(int channelUid, time_t start, time_t end,
 // two layers (that split is what caused the double "/api/v1/api/v1/..." bug in an earlier draft).
 bool EPGManager::GetEPGForChannel(int channelUid, time_t start, time_t end,
                                   const std::function<std::string(const std::string&)>& httpGet,
-                                  const std::function<bool(const std::string&, rapidjson::Document&)>& parseJson,
+                                  const std::function<bool(const std::string&, nlohmann::json&)>& parseJson,
                                   const std::function<bool(int, UltimateChannel&)>& getChannelByUid,
                                   kodi::addon::PVREPGTagsResultSet& results,
                                   const std::function<std::string(const std::string&)>& httpGetAbsolute,
@@ -182,8 +183,10 @@ bool EPGManager::GetEPGForChannel(int channelUid, time_t start, time_t end,
 
   if (useDatabaseEpg && httpGetAbsolute) {
     std::ostringstream dbUrl;
-    dbUrl << "/api/v1/providers/" << provider << "/channels/" << channelId << "/epg"
+    dbUrl << "/api/v1/providers/" << Utils::UrlPathEncode(provider) << "/channels/"
+          << Utils::UrlPathEncode(channelId) << "/epg"
           << "?start_time=" << start << "&end_time=" << end;
+    if (!country.empty()) dbUrl << "&country=" << Utils::UrlEncode(country);
 
     // Single call - httpGetAbsolute performs the request and returns the response body directly.
     std::string dbResponse = httpGetAbsolute(dbUrl.str());
@@ -200,9 +203,10 @@ bool EPGManager::GetEPGForChannel(int channelUid, time_t start, time_t end,
   }
 
   std::ostringstream url;
-  url << "/api/providers/" << provider << "/channels/" << channelId << "/epg"
+  url << "/api/providers/" << Utils::UrlPathEncode(provider) << "/channels/"
+      << Utils::UrlPathEncode(channelId) << "/epg"
       << "?start_time=" << start << "&end_time=" << end;
-  if (!country.empty()) url << "&country=" << country;
+  if (!country.empty()) url << "&country=" << Utils::UrlEncode(country);
 
   std::string response = httpGet(url.str());
   if (response.empty()) return false;
@@ -211,7 +215,10 @@ bool EPGManager::GetEPGForChannel(int channelUid, time_t start, time_t end,
 }
 
 bool EPGManager::IsEPGTagRecordable(const kodi::addon::PVREPGTag& tag, bool& isRecordable) {
-  isRecordable = true;
+  // Only events that haven't ended yet are recordable (a completed event
+  // needs to be pulled from catchup/recordings, not scheduled as a timer).
+  time_t now = std::time(nullptr);
+  isRecordable = (tag.GetEndTime() > now);
   return true;
 }
 
@@ -241,7 +248,7 @@ bool EPGManager::IsEPGTagPlayable(const kodi::addon::PVREPGTag& tag, bool& isPla
 bool EPGManager::GetEPGTagStreamProperties(const kodi::addon::PVREPGTag& tag,
                                            std::vector<kodi::addon::PVRStreamProperty>& properties,
                                            const std::function<std::string(const std::string&)>& httpGet,
-                                           const std::function<bool(const std::string&, rapidjson::Document&)>& parseJson,
+                                           const std::function<bool(const std::string&, nlohmann::json&)>& parseJson,
                                            const std::function<bool(int, std::string&, std::string&, int&)>& getChannelInfo,
                                            const std::function<bool(int, UltimateChannel&)>& getChannelByUid,
                                            const std::function<bool()>& isBackendAvailable,
@@ -281,11 +288,11 @@ bool EPGManager::GetEPGTagStreamProperties(const kodi::addon::PVREPGTag& tag,
     if (response.empty()) return false;
   }
 
-  rapidjson::Document document;
-  if (!parseJson(response, document) || !document.IsObject()) return false;
+  nlohmann::json document;
+  if (!parseJson(response, document) || !document.is_object()) return false;
 
-  if (!document.HasMember("catchup_stream_url_template") ||
-      !document["catchup_stream_url_template"].IsString()) {
+  if (!document.contains("catchup_stream_url_template") ||
+      !document["catchup_stream_url_template"].is_string()) {
     kodi::Log(ADDON_LOG_WARNING,
               "No catchup_stream_url_template in manifest for %s/%s; channel reports "
               "catchup support (catchupHours=%d) but backend did not provide a template",
@@ -293,7 +300,7 @@ bool EPGManager::GetEPGTagStreamProperties(const kodi::addon::PVREPGTag& tag,
     return false;
   }
 
-  std::string streamUrl = document["catchup_stream_url_template"].GetString();
+  std::string streamUrl = document["catchup_stream_url_template"].get<std::string>();
 
   auto hasPlaceholder = [&streamUrl](const std::string& placeholder) {
     return streamUrl.find(placeholder) != std::string::npos;

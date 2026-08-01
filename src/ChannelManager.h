@@ -4,10 +4,11 @@
 #include <kodi/addon-instance/PVR.h>
 #include <vector>
 #include <map>
+#include <unordered_map>
 #include <shared_mutex>
 #include <functional>
 #include <string>
-#include "rapidjson/document.h"
+#include <nlohmann/json.hpp>
 
 class ChannelManager {
 public:
@@ -17,7 +18,7 @@ public:
 
     bool LoadChannels(const std::vector<UltimateProvider>& providers,
                       const std::function<std::string(const std::string&)>& httpGet,
-                      const std::function<bool(const std::string&, rapidjson::Document&)>& parseJson);
+                      const std::function<bool(const std::string&, nlohmann::json&)>& parseJson);
 
     int GetChannelsAmount() const;
     bool GetChannels(bool radio, kodi::addon::PVRChannelsResultSet& results) const;
@@ -35,11 +36,12 @@ public:
 private:
     static void LoadChannelsForProvider(const std::string& provider, int providerIndex,
                                         const std::function<std::string(const std::string&)>& httpGet,
-                                        const std::function<bool(const std::string&, rapidjson::Document&)>& parseJson,
+                                        const std::function<bool(const std::string&, nlohmann::json&)>& parseJson,
                                         std::vector<UltimateChannel>& outChannels,
                                         std::map<int, ChannelLookupInfo>& outLookup);
 
     std::vector<UltimateChannel> m_channels;
     std::map<int, ChannelLookupInfo> m_channelLookup;
+    std::unordered_map<int, size_t> m_channelIndex;  // channelNumber -> index into m_channels, O(1) GetChannelByUid
     mutable std::shared_mutex m_dataMutex;
 };

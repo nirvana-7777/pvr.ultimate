@@ -7,21 +7,22 @@
 #include <vector>
 #include <ctime>
 
-// Required by RapidJSON for GetParseError_En
-#include <rapidjson/error/en.h>
-
 #ifdef _WIN32
     #define timegm _mkgmtime
 #endif
 
-bool Utils::ParseJsonResponse(const std::string& response, rapidjson::Document& document) {
-  rapidjson::ParseResult result = document.Parse(response.c_str());
-  if (result.IsError()) {
-    kodi::Log(ADDON_LOG_ERROR, "JSON parse error: %s (Offset: %zu)",
-              rapidjson::GetParseError_En(result.Code()), result.Offset());
+bool Utils::ParseJsonResponse(const std::string& response, nlohmann::json& document) {
+  if (response.empty()) return false;
+  try {
+    document = nlohmann::json::parse(response);
+    return true;
+  } catch (const nlohmann::json::parse_error& e) {
+    kodi::Log(ADDON_LOG_ERROR, "JSON parse error: %s (byte %zu)", e.what(), e.byte);
+    return false;
+  } catch (const std::exception& e) {
+    kodi::Log(ADDON_LOG_ERROR, "Unexpected JSON error: %s", e.what());
     return false;
   }
-  return true;
 }
 
 std::string Utils::Base64Decode(const std::string& base64Data) {
@@ -63,45 +64,50 @@ std::string Utils::UrlEncode(const std::string& value) {
   return escaped.str();
 }
 
-std::string Utils::ConvertDrmJsonToLegacy(const rapidjson::Value& drmJson) {
-  if (!drmJson.IsObject()) return "";
+std::string Utils::ConvertDrmJsonToLegacy(const nlohmann::json& drmJson) {
+  if (!drmJson.is_object()) return "";
 
-  std::string keySystem = "com.widevine.alpha";
-  const rapidjson::Value* drmSystem = nullptr;
+  // Always select by backend-declared "priority" (lowest wins, ties broken by
+  // key name for determinism) - matches PVRUltimate::GetDRMConfig/GetDRMConfigJson
+  // elsewhere in this file. Previously this function special-cased
+  // "com.widevine.alpha" to always win when present, silently ignoring the
+  // backend's priority field whenever Widevine was offered as an option.
+  std::string keySystem;
+  const nlohmann::json* drmSystem = nullptr;
 
-  if (drmJson.HasMember("com.widevine.alpha")) {
-    drmSystem = &drmJson["com.widevine.alpha"];
-  } else if (drmJson.MemberBegin() != drmJson.MemberEnd()) {
+  if (!drmJson.empty()) {
     std::vector<std::pair<std::string, int>> drmPriorities;
-    for (auto it = drmJson.MemberBegin(); it != drmJson.MemberEnd(); ++it) {
+    for (auto it = drmJson.begin(); it != drmJson.end(); ++it) {
       int priority = 1;
-      if (it->value.HasMember("priority") && it->value["priority"].IsInt()) {
-        priority = it->value["priority"].GetInt();
+      if (it.value().is_object() && it.value().contains("priority") &&
+          it.value()["priority"].is_number_integer()) {
+        priority = it.value()["priority"].get<int>();
       }
-      drmPriorities.push_back({it->name.GetString(), priority});
+      drmPriorities.push_back({it.key(), priority});
     }
-    auto selected = std::min_element(drmPriorities.begin(), drmPriorities.end(),
-                                     [](const auto& a, const auto& b) {
-                                       return a.second < b.second;
-                                     });
-    if (selected != drmPriorities.end()) {
-      keySystem = selected->first;
+    std::sort(drmPriorities.begin(), drmPriorities.end(),
+              [](const auto& a, const auto& b) {
+                if (a.second != b.second) return a.second < b.second;
+                return a.first < b.first;
+              });
+    if (!drmPriorities.empty()) {
+      keySystem = drmPriorities.front().first;
       drmSystem = &drmJson[keySystem];
     }
   }
 
-  if (!drmSystem || !drmSystem->IsObject()) return "";
-  if (!drmSystem->HasMember("license") || !(*drmSystem)["license"].IsObject()) return "";
+  if (!drmSystem || !drmSystem->is_object()) return "";
+  if (!drmSystem->contains("license") || !(*drmSystem)["license"].is_object()) return "";
 
-  const rapidjson::Value& license = (*drmSystem)["license"];
+  const nlohmann::json& license = (*drmSystem)["license"];
 
   std::string licenseUrl, headers, reqData;
-  if (license.HasMember("server_url") && license["server_url"].IsString())
-    licenseUrl = license["server_url"].GetString();
-  if (license.HasMember("req_headers") && license["req_headers"].IsString())
-    headers = license["req_headers"].GetString();
-  if (license.HasMember("req_data") && license["req_data"].IsString())
-    reqData = license["req_data"].GetString();
+  if (license.contains("server_url") && license["server_url"].is_string())
+    licenseUrl = license["server_url"].get<std::string>();
+  if (license.contains("req_headers") && license["req_headers"].is_string())
+    headers = license["req_headers"].get<std::string>();
+  if (license.contains("req_data") && license["req_data"].is_string())
+    reqData = license["req_data"].get<std::string>();
 
   std::string result = keySystem;
   if (!licenseUrl.empty()) result += "|" + licenseUrl;
@@ -128,6 +134,12 @@ time_t Utils::ParseISO8601(const std::string& isoString) {
 
   std::tm tm = {};
   std::istringstream ss(clean);
+  // Force the classic "C" locale so this is safe to call from any thread
+  // regardless of the process-global locale (get_time's month/day-name
+  // parsing is locale-sensitive; numeric-only formats like this one are less
+  // exposed, but imbuing classic() removes the dependency entirely and keeps
+  // this call thread-safe under kodi's locale handling).
+  ss.imbue(std::locale::classic());
   ss >> std::get_time(&tm, "%Y-%m-%dT%H:%M:%S");
   if (ss.fail()) return 0;
 
@@ -172,4 +184,73 @@ int Utils::GenerateProviderUniqueId(const std::string& providerName) {
     hash = ((hash << 5) + hash) + static_cast<unsigned int>(c);
   }
   return static_cast<int>(hash & 0x7FFFFFFF);
+}
+
+namespace {
+inline bool IsUrlSafe(char c) {
+  return (c >= 'A' && c <= 'Z') ||
+         (c >= 'a' && c <= 'z') ||
+         (c >= '0' && c <= '9') ||
+         c == '-' || c == '_' || c == '.' || c == '~';
+}
+}  // namespace
+
+std::string Utils::UrlPathEncode(const std::string& value) {
+  std::ostringstream escaped;
+  escaped.fill('0');
+  escaped << std::hex;
+  for (unsigned char c : value) {
+    if (IsUrlSafe(static_cast<char>(c)) || c == '/') {
+      escaped << static_cast<char>(c);
+    } else {
+      escaped << std::uppercase;
+      escaped << '%' << std::setw(2) << static_cast<int>(c);
+      escaped << std::nouppercase;
+    }
+  }
+  return escaped.str();
+}
+
+std::string Utils::RedactUrl(const std::string& url) {
+  std::string result = url;
+  std::vector<std::string> patterns = {"token=", "key=", "api_key=", "password=", "apikey=", "auth=", "Authorization="};
+
+  for (const auto& pattern : patterns) {
+    size_t pos = result.find(pattern);
+    while (pos != std::string::npos) {
+      bool isParam = (pos == 0 || result[pos - 1] == '?' || result[pos - 1] == '&' ||
+                      result[pos - 1] == '|' || result[pos - 1] == '=');
+      if (isParam) {
+        size_t end = result.find_first_of("&|", pos);
+        if (end == std::string::npos) end = result.length();
+        result.replace(pos, end - pos, pattern + "REDACTED");
+      }
+      pos = result.find(pattern, pos + 1);
+    }
+  }
+
+  size_t authPos = result.find("://");
+  if (authPos != std::string::npos) {
+    size_t start = authPos + 3;
+    size_t atPos = result.find("@", start);
+    if (atPos != std::string::npos) {
+      size_t colonPos = result.find(":", start);
+      if (colonPos != std::string::npos && colonPos < atPos) {
+        result.replace(colonPos + 1, atPos - colonPos - 1, "REDACTED");
+      }
+    }
+  }
+
+  return result;
+}
+
+int Utils::SafeStoi(const std::string& str, int defaultValue) {
+  if (str.empty()) return defaultValue;
+  try {
+    size_t pos = 0;
+    int value = std::stoi(str, &pos);
+    return value;
+  } catch (...) {
+    return defaultValue;
+  }
 }

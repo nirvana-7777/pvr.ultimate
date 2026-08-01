@@ -5,7 +5,7 @@
 #include <vector>
 #include <functional>
 #include <string>
-#include "rapidjson/document.h"
+#include <nlohmann/json.hpp>
 
 class EPGManager {
 public:
@@ -13,7 +13,7 @@ public:
 
     static bool GetEPGForChannel(int channelUid, time_t start, time_t end,
                                  const std::function<std::string(const std::string&)>& httpGet,
-                                 const std::function<bool(const std::string&, rapidjson::Document&)>& parseJson,
+                                 const std::function<bool(const std::string&, nlohmann::json&)>& parseJson,
                                  const std::function<bool(int, UltimateChannel&)>& getChannelByUid,
                                  kodi::addon::PVREPGTagsResultSet& results);
 
@@ -21,7 +21,7 @@ public:
     // falling back to the backend API (httpGet) on empty response or parse failure.
     static bool GetEPGForChannel(int channelUid, time_t start, time_t end,
                                  const std::function<std::string(const std::string&)>& httpGet,
-                                 const std::function<bool(const std::string&, rapidjson::Document&)>& parseJson,
+                                 const std::function<bool(const std::string&, nlohmann::json&)>& parseJson,
                                  const std::function<bool(int, UltimateChannel&)>& getChannelByUid,
                                  kodi::addon::PVREPGTagsResultSet& results,
                                  const std::function<std::string(const std::string&)>& httpGetAbsolute,
@@ -43,7 +43,7 @@ public:
     static bool GetEPGTagStreamProperties(const kodi::addon::PVREPGTag& tag,
                                           std::vector<kodi::addon::PVRStreamProperty>& properties,
                                           const std::function<std::string(const std::string&)>& httpGet,
-                                          const std::function<bool(const std::string&, rapidjson::Document&)>& parseJson,
+                                          const std::function<bool(const std::string&, nlohmann::json&)>& parseJson,
                                           const std::function<bool(int, std::string&, std::string&, int&)>& getChannelInfo,
                                           const std::function<bool(int, UltimateChannel&)>& getChannelByUid,
                                           const std::function<bool()>& isBackendAvailable,
@@ -58,6 +58,6 @@ private:
     // Shared parsing logic - single source of truth for EPG JSON -> PVREPGTag mapping.
     static bool ParseEPGResponse(const std::string& response,
                                  int channelUid,
-                                 const std::function<bool(const std::string&, rapidjson::Document&)>& parseJson,
+                                 const std::function<bool(const std::string&, nlohmann::json&)>& parseJson,
                                  kodi::addon::PVREPGTagsResultSet& results);
 };

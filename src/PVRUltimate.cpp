@@ -3,8 +3,6 @@
 #include <kodi/General.h>
 #include <kodi/AddonBase.h>
 #include <kodi/Filesystem.h>
-#include <rapidjson/stringbuffer.h>
-#include <rapidjson/writer.h>
 #include <sstream>
 #include <ctime>
 #include <algorithm>
@@ -36,61 +34,107 @@ CPVRUltimate::CPVRUltimate()
     std::lock_guard<std::mutex> lock(m_configMutex);
     m_backendUrl = kodi::addon::GetSettingString("backend_url", "127.0.0.1");
     m_backendPort = kodi::addon::GetSettingInt("backend_port", 7777);
+    m_apiKey = kodi::addon::GetSettingString("api_key", "");
+    m_customHeaders = kodi::addon::GetSettingString("custom_headers", "");
+    m_epgServiceUrl = kodi::addon::GetSettingString("epg_service_url", "http://localhost:8080");
   }
   m_maxRetries = kodi::addon::GetSettingInt("retry_attempts", 10);
   m_retryDelayMs = kodi::addon::GetSettingInt("retry_delay", 2000);
-
   m_useDatabaseEpg = kodi::addon::GetSettingBoolean("epg_enabled", false);
-  {
-    std::lock_guard<std::mutex> lock(m_configMutex);
-    m_epgServiceUrl = kodi::addon::GetSettingString("epg_service_url", "http://localhost:8080");
+
+  // Backend discovery and all initial data loading happen on a background
+  // thread (see InitializeAsync) rather than here, so a slow or unreachable
+  // backend cannot block Kodi's PVR-client construction. With
+  // m_maxRetries=10 and exponential-ish backoff (retryDelayMs * attempt),
+  // doing this synchronously in the constructor could block for close to two
+  // minutes, which risks Kodi's own watchdog marking the addon unresponsive.
+  m_initThread = std::thread(&CPVRUltimate::InitializeAsync, this);
+}
+
+CPVRUltimate::~CPVRUltimate() {
+  kodi::Log(ADDON_LOG_INFO, "Ultimate PVR Client stopping...");
+  EnsureInitThreadStopped();
+  if (m_initThread.joinable()) {
+    m_initThread.join();
   }
+}
 
-  if (RetryBackendCall("initialization")) {
-    DetectBackendCapabilities();
+void CPVRUltimate::EnsureInitThreadStopped() {
+  m_stopInit = true;
+  m_initCv.notify_all();
 
-    // Lambda wrappers for HTTP calls
-    auto httpGet = [this](const std::string& endpoint) -> std::string {
-      return this->HttpGet(this->BuildApiUrl(endpoint));
-    };
-    auto parseJson = [](const std::string& response, rapidjson::Document& doc) -> bool {
-      return Utils::ParseJsonResponse(response, doc);
-    };
+  std::unique_lock<std::mutex> lock(m_initMutex);
+  m_initCv.wait_for(lock, std::chrono::seconds(15), [this]() { return !m_initRunning.load(); });
+}
 
-    // Load all data using managers
-    if (!m_providerManager->LoadProviders(httpGet, parseJson)) {
-      kodi::Log(ADDON_LOG_ERROR, "Failed to load providers");
+void CPVRUltimate::InitializeAsync() {
+  m_stopInit = false;
+  m_initRunning = true;
+  kodi::Log(ADDON_LOG_INFO, "Background initialization started...");
+
+  try {
+    if (RetryBackendCall("initialization")) {
+      if (m_stopInit.load()) {
+        m_initRunning = false;
+        m_initCv.notify_all();
+        return;
+      }
+
+      DetectBackendCapabilities();
+
+      auto httpGet = [this](const std::string& endpoint) -> std::string {
+        return this->HttpGet(this->BuildApiUrl(endpoint));
+      };
+      auto parseJson = [](const std::string& response, nlohmann::json& doc) -> bool {
+        return Utils::ParseJsonResponse(response, doc);
+      };
+
+      if (m_stopInit.load()) { m_initRunning = false; m_initCv.notify_all(); return; }
+      if (!m_providerManager->LoadProviders(httpGet, parseJson)) {
+        kodi::Log(ADDON_LOG_ERROR, "Failed to load providers");
+      }
+
+      const auto& providers = m_providerManager->GetProviders();
+
+      if (m_stopInit.load()) { m_initRunning = false; m_initCv.notify_all(); return; }
+      if (!m_channelManager->LoadChannels(providers, httpGet, parseJson)) {
+        kodi::Log(ADDON_LOG_ERROR, "Failed to load channels");
+      }
+
+      if (m_stopInit.load()) { m_initRunning = false; m_initCv.notify_all(); return; }
+      if (!m_timerManager->LoadTimerTypes(providers, httpGet, parseJson)) {
+        kodi::Log(ADDON_LOG_WARNING, "Failed to load timer types");
+      }
+
+      if (m_stopInit.load()) { m_initRunning = false; m_initCv.notify_all(); return; }
+      if (!m_recordingManager->LoadRecordings(providers, httpGet, parseJson)) {
+        kodi::Log(ADDON_LOG_WARNING, "Failed to load recordings or none available");
+      }
+
+      if (m_stopInit.load()) { m_initRunning = false; m_initCv.notify_all(); return; }
+      if (!m_timerManager->LoadTimers(providers, httpGet, parseJson)) {
+        kodi::Log(ADDON_LOG_WARNING, "Failed to load timers or none available");
+      }
+    } else {
+      kodi::QueueNotification(QUEUE_WARNING, "PVR Ultimate", "Backend unavailable - check connection settings");
     }
-
-    const auto& providers = m_providerManager->GetProviders();
-
-    if (!m_channelManager->LoadChannels(providers, httpGet, parseJson)) {
-      kodi::Log(ADDON_LOG_ERROR, "Failed to load channels");
-    }
-
-    if (!m_timerManager->LoadTimerTypes(providers, httpGet, parseJson)) {
-      kodi::Log(ADDON_LOG_WARNING, "Failed to load timer types");
-    }
-
-    if (!m_recordingManager->LoadRecordings(providers, httpGet, parseJson)) {
-      kodi::Log(ADDON_LOG_WARNING, "Failed to load recordings or none available");
-    }
-
-    if (!m_timerManager->LoadTimers(providers, httpGet, parseJson)) {
-      kodi::Log(ADDON_LOG_WARNING, "Failed to load timers or none available");
-    }
+  } catch (const std::exception& e) {
+    kodi::Log(ADDON_LOG_ERROR, "Background initialization failed: %s", e.what());
+    kodi::QueueNotification(QUEUE_ERROR, "PVR Ultimate", std::string("Initialization failed: ") + e.what());
+  } catch (...) {
+    kodi::Log(ADDON_LOG_ERROR, "Background initialization failed: unknown exception");
+    kodi::QueueNotification(QUEUE_ERROR, "PVR Ultimate", "Initialization failed");
   }
 
   int channelCount = m_channelManager->GetChannelsAmount();
   int recordingCount = m_recordingManager->GetRecordingsAmount(false);
   int timerCount = m_timerManager->GetTimersAmount();
-
   kodi::Log(ADDON_LOG_INFO, "Ultimate PVR Client loaded %d channels, %d recordings, %d timers",
             channelCount, recordingCount, timerCount);
-}
 
-CPVRUltimate::~CPVRUltimate() {
-  kodi::Log(ADDON_LOG_INFO, "Ultimate PVR Client stopping...");
+  m_initialized = true;
+  m_initRunning = false;
+  m_initCv.notify_all();
 }
 
 void CPVRUltimate::DetectInputstreamVersion() {
@@ -116,11 +160,11 @@ void CPVRUltimate::DetectBackendCapabilities() {
   std::string response = HttpGet(url);
 
   if (!response.empty()) {
-    rapidjson::Document doc;
-    if (Utils::ParseJsonResponse(response, doc) && doc.IsObject()) {
-      if (doc.HasMember("features") && doc["features"].IsArray()) {
-        for (const auto& feature : doc["features"].GetArray()) {
-          if (feature.IsString() && std::string(feature.GetString()) == "header_piggyback") {
+    nlohmann::json doc;
+    if (Utils::ParseJsonResponse(response, doc) && doc.is_object()) {
+      if (doc.contains("features") && doc["features"].is_array()) {
+        for (const auto& feature : doc["features"]) {
+          if (feature.is_string() && std::string(feature.get<std::string>()) == "header_piggyback") {
             m_supportsPiggyback = true;
             kodi::Log(ADDON_LOG_INFO, "Backend supports header piggyback");
             break;
@@ -132,24 +176,18 @@ void CPVRUltimate::DetectBackendCapabilities() {
 }
 
 bool CPVRUltimate::RetryBackendCall(const std::string& operationName) {
-  int maxRetries = m_maxRetries.load();
-  for (int attempt = 1; attempt <= maxRetries; attempt++) {
-    std::string testUrl = BuildApiUrl("/api/providers");
-    std::string response = HttpGet(testUrl);
-    if (!response.empty()) {
-      kodi::Log(ADDON_LOG_INFO, "Backend connection established on attempt %d", attempt);
-      m_backendAvailable = true;
-      return true;
-    }
-    if (attempt < maxRetries) {
-      int delay = m_retryDelayMs.load() * attempt;
-      kodi::Log(ADDON_LOG_WARNING, "Backend not ready for %s, attempt %d/%d, retrying in %dms...",
-                operationName.c_str(), attempt, maxRetries, delay);
-      SleepMs(delay);
-    }
+  // HttpGet now retries internally (see HttpGet), so this no longer loops
+  // itself - doing so would multiply attempts to maxRetries^2 and stack two
+  // independent backoff delays on top of each other.
+  std::string testUrl = BuildApiUrl("/api/providers");
+  std::string response = HttpGet(testUrl);
+  if (!response.empty()) {
+    kodi::Log(ADDON_LOG_INFO, "Backend connection established for %s", operationName.c_str());
+    m_backendAvailable = true;
+    return true;
   }
   kodi::Log(ADDON_LOG_ERROR, "Backend unavailable for %s after %d attempts",
-            operationName.c_str(), maxRetries);
+            operationName.c_str(), m_maxRetries.load() + 1);
   m_backendAvailable = false;
   return false;
 }
@@ -189,6 +227,18 @@ ADDON_STATUS CPVRUltimate::SetSetting(const std::string& settingName,
     kodi::Log(ADDON_LOG_INFO, "Database EPG service enabled: %s", m_useDatabaseEpg.load() ? "true" : "false");
     return ADDON_STATUS_OK;
   }
+  else if (settingName == "api_key") {
+    std::lock_guard<std::mutex> lock(m_configMutex);
+    m_apiKey = settingValue.GetString();
+    kodi::Log(ADDON_LOG_INFO, "API key changed");
+    return ADDON_STATUS_NEED_RESTART;
+  }
+  else if (settingName == "custom_headers") {
+    std::lock_guard<std::mutex> lock(m_configMutex);
+    m_customHeaders = settingValue.GetString();
+    kodi::Log(ADDON_LOG_INFO, "Custom headers changed");
+    return ADDON_STATUS_NEED_RESTART;
+  }
   else if (settingName == "epg_service_url") {
     std::lock_guard<std::mutex> lock(m_configMutex);
     m_epgServiceUrl = settingValue.GetString();
@@ -208,7 +258,14 @@ std::string CPVRUltimate::BuildApiUrl(const std::string& endpoint) {
 }
 
 std::string CPVRUltimate::HttpSendRequest(const std::string& url, const std::string& method, const std::string& body) {
-  kodi::Log(ADDON_LOG_DEBUG, "HTTP %s: %s", method.c_str(), url.c_str());
+  kodi::Log(ADDON_LOG_DEBUG, "HTTP %s: %s", method.c_str(), Utils::RedactUrl(url).c_str());
+
+  std::string apiKey, customHeaders;
+  {
+    std::lock_guard<std::mutex> lock(m_configMutex);
+    apiKey = m_apiKey;
+    customHeaders = m_customHeaders;
+  }
 
   // 1. Basis-URL vorbereiten und den ersten Header mit '|' anhängen
   std::string formattedUrl = url + "|Content-Type=application/json";
@@ -223,11 +280,35 @@ std::string CPVRUltimate::HttpSendRequest(const std::string& url, const std::str
     formattedUrl += "&postdata=" + Utils::UrlEncode(body);
   }
 
+  // 4. Auth/custom headers - restored: these were dropped entirely by the
+  // rapidjson migration (no Authorization header was ever sent, and
+  // custom_headers was ignored), which would silently break any backend
+  // that requires an API key.
+  if (!apiKey.empty()) {
+    formattedUrl += "&Authorization=" + Utils::UrlEncode("Bearer " + apiKey);
+  }
+  if (!customHeaders.empty()) {
+    // The custom_headers setting predates this restore and may still be
+    // entered in the pre-migration "|Header1=value1|Header2=value2" style
+    // (a leading '|' with '|'-separated pairs), rather than the
+    // '&'-separated style the rest of this URL now uses consistently.
+    // Normalize both to the '&'-separated form Kodi expects after the
+    // first '|' so either input format works.
+    std::string normalized = customHeaders;
+    if (!normalized.empty() && normalized.front() == '|') {
+      normalized.erase(0, 1);
+    }
+    std::replace(normalized.begin(), normalized.end(), '|', '&');
+    if (!normalized.empty()) {
+      formattedUrl += "&" + normalized;
+    }
+  }
+
   kodi::vfs::CFile file;
 
-  // 4. Datei/URL direkt öffnen (Kodi parst die Optionen automatisch heraus)
+  // 5. Datei/URL direkt öffnen (Kodi parst die Optionen automatisch heraus)
   if (!file.OpenFile(formattedUrl, ADDON_READ_NO_CACHE)) {
-    kodi::Log(ADDON_LOG_ERROR, "Failed to open URL: %s", url.c_str());
+    kodi::Log(ADDON_LOG_ERROR, "Failed to open URL: %s", Utils::RedactUrl(url).c_str());
     return "";
   }
 
@@ -242,13 +323,27 @@ std::string CPVRUltimate::HttpSendRequest(const std::string& url, const std::str
 }
 
 std::string CPVRUltimate::HttpGet(const std::string& url) {
-  return HttpSendRequest(url, "GET", "");
+  // Restored per-request retry (dropped in the rapidjson migration - only
+  // RetryBackendCall's initial connectivity probe retried; every ordinary
+  // data load, including provider/channel/recording/timer loads, was a
+  // single-shot request with no retry at all).
+  int maxRetries = m_maxRetries.load();
+  int retryDelay = m_retryDelayMs.load();
+  std::string response;
+  for (int attempt = 0; attempt <= maxRetries; ++attempt) {
+    response = HttpSendRequest(url, "GET", "");
+    if (!response.empty()) return response;
+    if (attempt < maxRetries) {
+      SleepMs(retryDelay);
+    }
+  }
+  return response;
 }
 
 bool CPVRUltimate::HttpDelete(const std::string& url) {
   std::string resp = HttpSendRequest(url, "DELETE", "");
   if (resp.empty()) {
-    kodi::Log(ADDON_LOG_ERROR, "HTTP DELETE failed: %s", url.c_str());
+    kodi::Log(ADDON_LOG_ERROR, "HTTP DELETE failed: %s", Utils::RedactUrl(url).c_str());
     return false;
   }
   return true;
@@ -257,7 +352,7 @@ bool CPVRUltimate::HttpDelete(const std::string& url) {
 bool CPVRUltimate::HttpPost(const std::string& url, const std::string& body) {
   std::string resp = HttpSendRequest(url, "POST", body);
   if (resp.empty()) {
-    kodi::Log(ADDON_LOG_ERROR, "HTTP POST failed: %s", url.c_str());
+    kodi::Log(ADDON_LOG_ERROR, "HTTP POST failed: %s", Utils::RedactUrl(url).c_str());
     return false;
   }
   return true;
@@ -266,7 +361,7 @@ bool CPVRUltimate::HttpPost(const std::string& url, const std::string& body) {
 bool CPVRUltimate::HttpPut(const std::string& url, const std::string& body) {
   std::string resp = HttpSendRequest(url, "PUT", body);
   if (resp.empty()) {
-    kodi::Log(ADDON_LOG_ERROR, "HTTP PUT failed: %s", url.c_str());
+    kodi::Log(ADDON_LOG_ERROR, "HTTP PUT failed: %s", Utils::RedactUrl(url).c_str());
     return false;
   }
   return true;
@@ -279,13 +374,13 @@ bool CPVRUltimate::HttpGetWithHeaders(const std::string& url,
   response = HttpGet(url);
   if (response.empty()) return false;
 
-  rapidjson::Document doc;
-  if (Utils::ParseJsonResponse(response, doc) && doc.IsObject()) {
-    if (doc.HasMember("drm_configs_base64") && doc["drm_configs_base64"].IsString()) {
-      drmConfigsBase64 = doc["drm_configs_base64"].GetString();
+  nlohmann::json doc;
+  if (Utils::ParseJsonResponse(response, doc) && doc.is_object()) {
+    if (doc.contains("drm_configs_base64") && doc["drm_configs_base64"].is_string()) {
+      drmConfigsBase64 = doc["drm_configs_base64"].get<std::string>();
     }
-    if (doc.HasMember("stream_headers_base64") && doc["stream_headers_base64"].IsString()) {
-      streamHeadersBase64 = doc["stream_headers_base64"].GetString();
+    if (doc.contains("stream_headers_base64") && doc["stream_headers_base64"].is_string()) {
+      streamHeadersBase64 = doc["stream_headers_base64"].get<std::string>();
     }
     return true;
   }
@@ -293,29 +388,29 @@ bool CPVRUltimate::HttpGetWithHeaders(const std::string& url,
 }
 
 std::string CPVRUltimate::GetManifestUrl(const std::string& provider, const std::string& channelId) {
-  return BuildApiUrl("/api/providers/" + provider + "/channels/" + channelId + "/manifest");
+  return BuildApiUrl("/api/providers/" + Utils::UrlPathEncode(provider) + "/channels/" + Utils::UrlPathEncode(channelId) + "/manifest");
 }
 
 DRMConfig CPVRUltimate::GetDRMConfig(const std::string& provider, const std::string& channelId,
                                      bool isRecording) {
   DRMConfig config;
   std::string entityPath = isRecording ? "/recordings/" : "/channels/";
-  std::string response = HttpGet(BuildApiUrl("/api/providers/" + provider + entityPath + channelId + "/drm"));
+  std::string response = HttpGet(BuildApiUrl("/api/providers/" + Utils::UrlPathEncode(provider) + entityPath + Utils::UrlPathEncode(channelId) + "/drm"));
   if (response.empty()) return config;
 
-  rapidjson::Document document;
+  nlohmann::json document;
   if (!Utils::ParseJsonResponse(response, document)) return config;
 
-  if (document.HasMember("drm_configs") && document["drm_configs"].IsObject()) {
-    const rapidjson::Value& drmConfigs = document["drm_configs"];
+  if (document.contains("drm_configs") && document["drm_configs"].is_object()) {
+    const nlohmann::json& drmConfigs = document["drm_configs"];
 
     std::vector<std::pair<std::string, int>> drmSystems;
-    for (auto it = drmConfigs.MemberBegin(); it != drmConfigs.MemberEnd(); ++it) {
+    for (auto it = drmConfigs.begin(); it != drmConfigs.end(); ++it) {
       int priority = 1;
-      if (it->value.HasMember("priority") && it->value["priority"].IsInt()) {
-        priority = it->value["priority"].GetInt();
+      if (it.value().is_object() && it.value().contains("priority") && it.value()["priority"].is_number_integer()) {
+        priority = it.value()["priority"].get<int>();
       }
-      drmSystems.emplace_back(it->name.GetString(), priority);
+      drmSystems.emplace_back(it.key(), priority);
     }
 
     if (!drmSystems.empty()) {
@@ -324,41 +419,44 @@ DRMConfig CPVRUltimate::GetDRMConfig(const std::string& provider, const std::str
                                                  return a.second < b.second;
                                                });
       config.system = selected->first;
-      const rapidjson::Value& drmData = drmConfigs[selected->first];
+      const nlohmann::json& drmData = drmConfigs[selected->first];
       config.priority = selected->second;
 
-      if (drmData.HasMember("license") && drmData["license"].IsObject()) {
-        const rapidjson::Value& license = drmData["license"];
-        if (license.HasMember("server_url") && license["server_url"].IsString())
-          config.license.serverUrl = license["server_url"].GetString();
-        if (license.HasMember("req_headers") && license["req_headers"].IsString())
-          config.license.reqHeaders = license["req_headers"].GetString();
-        if (license.HasMember("req_data") && license["req_data"].IsString())
-          config.license.reqData = license["req_data"].GetString();
-        if (license.HasMember("server_certificate") && license["server_certificate"].IsString())
-          config.license.serverCertificate = license["server_certificate"].GetString();
-        if (license.HasMember("wrapper") && license["wrapper"].IsString())
-          config.license.wrapper = license["wrapper"].GetString();
-        if (license.HasMember("unwrapper") && license["unwrapper"].IsString())
-          config.license.unwrapper = license["unwrapper"].GetString();
+      if (drmData.contains("license") && drmData["license"].is_object()) {
+        const nlohmann::json& license = drmData["license"];
+        if (license.contains("server_url") && license["server_url"].is_string())
+          config.license.serverUrl = license["server_url"].get<std::string>();
+        if (license.contains("req_headers") && license["req_headers"].is_string())
+          config.license.reqHeaders = license["req_headers"].get<std::string>();
+        if (license.contains("req_data") && license["req_data"].is_string())
+          config.license.reqData = license["req_data"].get<std::string>();
+        if (license.contains("server_certificate") && license["server_certificate"].is_string())
+          config.license.serverCertificate = license["server_certificate"].get<std::string>();
+        if (license.contains("wrapper") && license["wrapper"].is_string())
+          config.license.wrapper = license["wrapper"].get<std::string>();
+        if (license.contains("unwrapper") && license["unwrapper"].is_string())
+          config.license.unwrapper = license["unwrapper"].get<std::string>();
       }
     }
   }
   return config;
 }
 
-rapidjson::Document CPVRUltimate::GetDRMConfigJson(const std::string& provider, const std::string& channelId,
-                                                   bool isRecording) {
-  rapidjson::Document drmConfigs(rapidjson::kObjectType);
+nlohmann::json CPVRUltimate::GetDRMConfigJson(const std::string& provider, const std::string& channelId,
+                                              bool isRecording) {
+  nlohmann::json drmConfigs = nlohmann::json::object();
   std::string entityPath = isRecording ? "/recordings/" : "/channels/";
-  std::string response = HttpGet(BuildApiUrl("/api/providers/" + provider + entityPath + channelId + "/drm"));
+  std::string response = HttpGet(BuildApiUrl("/api/providers/" + Utils::UrlPathEncode(provider) + entityPath + Utils::UrlPathEncode(channelId) + "/drm"));
   if (response.empty()) return drmConfigs;
 
-  rapidjson::Document document;
+  nlohmann::json document;
   if (!Utils::ParseJsonResponse(response, document)) return drmConfigs;
 
-  if (document.HasMember("drm_configs") && document["drm_configs"].IsObject()) {
-    drmConfigs.CopyFrom(document["drm_configs"], drmConfigs.GetAllocator());
+  if (document.contains("drm_configs") && document["drm_configs"].is_object()) {
+    // nlohmann::json values are regular value types - a plain assignment deep-copies
+    // the sub-object, unlike rapidjson's Document/Value split which requires an
+    // explicit CopyFrom(source, allocator) call to move data between documents.
+    drmConfigs = document["drm_configs"];
   }
   return drmConfigs;
 }
@@ -372,13 +470,10 @@ void CPVRUltimate::ApplyDRMProperties(std::vector<kodi::addon::PVRStreamProperty
   if (!drmConfigsBase64.empty()) {
     std::string decodedDrm = Utils::Base64Decode(drmConfigsBase64);
     if (!decodedDrm.empty()) {
-      rapidjson::Document drmDoc;
-      if (Utils::ParseJsonResponse(decodedDrm, drmDoc) && drmDoc.IsObject()) {
+      nlohmann::json drmDoc;
+      if (Utils::ParseJsonResponse(decodedDrm, drmDoc) && drmDoc.is_object()) {
         if (m_useModernDrm.load()) {
-          rapidjson::StringBuffer buffer;
-          rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
-          drmDoc.Accept(writer);
-          properties.emplace_back("inputstream.adaptive.drm", buffer.GetString());
+          properties.emplace_back("inputstream.adaptive.drm", drmDoc.dump());
         } else {
           std::string legacyDrm = Utils::ConvertDrmJsonToLegacy(drmDoc);
           if (!legacyDrm.empty()) properties.emplace_back("inputstream.adaptive.drm_legacy", legacyDrm);
@@ -390,12 +485,9 @@ void CPVRUltimate::ApplyDRMProperties(std::vector<kodi::addon::PVRStreamProperty
 
   if (!drmConfigured && useCdm) {
     if (m_useModernDrm.load()) {
-      rapidjson::Document drmConfigs = GetDRMConfigJson(provider, channelId, isRecording);
-      if (!drmConfigs.ObjectEmpty()) {
-        rapidjson::StringBuffer buffer;
-        rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
-        drmConfigs.Accept(writer);
-        properties.emplace_back("inputstream.adaptive.drm", buffer.GetString());
+      nlohmann::json drmConfigs = GetDRMConfigJson(provider, channelId, isRecording);
+      if (!drmConfigs.empty()) {
+        properties.emplace_back("inputstream.adaptive.drm", drmConfigs.dump());
       }
     } else {
       DRMConfig drmConfig = GetDRMConfig(provider, channelId, isRecording);
@@ -460,20 +552,13 @@ PVR_ERROR CPVRUltimate::GetDriveSpace(uint64_t& total, uint64_t& used) {
 PVR_ERROR CPVRUltimate::OnSystemWake() {
   kodi::Log(ADDON_LOG_INFO, "System woke up. Reloading PVR data...");
 
-  auto httpGet = [this](const std::string& endpoint) -> std::string {
-    return this->HttpGet(this->BuildApiUrl(endpoint));
-  };
-  auto parseJson = [](const std::string& response, rapidjson::Document& doc) -> bool {
-    return Utils::ParseJsonResponse(response, doc);
-  };
+  EnsureInitThreadStopped();
+  if (m_initThread.joinable()) {
+    m_initThread.join();
+  }
 
-  const auto& providers = m_providerManager->GetProviders();
-
-  m_providerManager->LoadProviders(httpGet, parseJson);
-  m_timerManager->LoadTimerTypes(providers, httpGet, parseJson);
-  m_channelManager->LoadChannels(providers, httpGet, parseJson);
-  m_recordingManager->LoadRecordings(providers, httpGet, parseJson);
-  m_timerManager->LoadTimers(providers, httpGet, parseJson);
+  m_initialized = false;
+  m_initThread = std::thread(&CPVRUltimate::InitializeAsync, this);
 
   return PVR_ERROR_NO_ERROR;
 }
@@ -483,11 +568,13 @@ PVR_ERROR CPVRUltimate::OnSystemWake() {
 // ============================================================================
 
 PVR_ERROR CPVRUltimate::GetProvidersAmount(int& amount) {
+  if (!IsReady()) { amount = 0; return PVR_ERROR_NO_ERROR; }
   amount = m_providerManager->GetProvidersAmount();
   return PVR_ERROR_NO_ERROR;
 }
 
 PVR_ERROR CPVRUltimate::GetProviders(kodi::addon::PVRProvidersResultSet& results) {
+  if (!IsReady()) return PVR_ERROR_NO_ERROR;
   m_providerManager->GetProviders(results);
   return PVR_ERROR_NO_ERROR;
 }
@@ -497,11 +584,13 @@ PVR_ERROR CPVRUltimate::GetProviders(kodi::addon::PVRProvidersResultSet& results
 // ============================================================================
 
 PVR_ERROR CPVRUltimate::GetChannelsAmount(int& amount) {
+  if (!IsReady()) { amount = 0; return PVR_ERROR_NO_ERROR; }
   amount = m_channelManager->GetChannelsAmount();
   return PVR_ERROR_NO_ERROR;
 }
 
 PVR_ERROR CPVRUltimate::GetChannels(bool radio, kodi::addon::PVRChannelsResultSet& results) {
+  if (!IsReady()) return PVR_ERROR_NO_ERROR;
   m_channelManager->GetChannels(radio, results);
   return PVR_ERROR_NO_ERROR;
 }
@@ -520,6 +609,11 @@ PVR_ERROR CPVRUltimate::GetChannelStreamProperties(
   std::string provider, channelId;
   bool useCdm = true;
   UltimateChannel ultimateChannel;
+
+  if (!IsReady()) {
+    kodi::Log(ADDON_LOG_WARNING, "GetChannelStreamProperties called before ready");
+    return PVR_ERROR_SERVER_ERROR;
+  }
 
   if (!m_channelManager->GetChannelByUid(channel.GetUniqueId(), ultimateChannel)) {
     return PVR_ERROR_SERVER_ERROR;
@@ -544,12 +638,12 @@ PVR_ERROR CPVRUltimate::GetChannelStreamProperties(
     if (response.empty()) return PVR_ERROR_SERVER_ERROR;
   }
 
-  rapidjson::Document document;
+  nlohmann::json document;
   if (!Utils::ParseJsonResponse(response, document)) return PVR_ERROR_SERVER_ERROR;
 
   std::string manifestUrl;
-  if (document.HasMember("manifest_url") && document["manifest_url"].IsString()) {
-    manifestUrl = document["manifest_url"].GetString();
+  if (document.contains("manifest_url") && document["manifest_url"].is_string()) {
+    manifestUrl = document["manifest_url"].get<std::string>();
   } else return PVR_ERROR_SERVER_ERROR;
 
   properties.emplace_back(PVR_STREAM_PROPERTY_INPUTSTREAM, "inputstream.adaptive");
@@ -568,27 +662,28 @@ void CPVRUltimate::ApplyStreamHeaders(std::vector<kodi::addon::PVRStreamProperty
   std::string decodedHeaders = Utils::Base64Decode(streamHeadersBase64);
   if (decodedHeaders.empty()) return;
 
-  rapidjson::Document headersDoc;
-  if (!Utils::ParseJsonResponse(decodedHeaders, headersDoc) || !headersDoc.IsObject()) return;
+  nlohmann::json headersDoc;
+  if (!Utils::ParseJsonResponse(decodedHeaders, headersDoc) || !headersDoc.is_object()) return;
 
-  auto buildHeaderString = [](const rapidjson::Value& obj) -> std::string {
+  auto buildHeaderString = [](const nlohmann::json& obj) -> std::string {
     std::string result;
-    for (auto it = obj.MemberBegin(); it != obj.MemberEnd(); ++it) {
+    for (auto it = obj.begin(); it != obj.end(); ++it) {
+      if (!it.value().is_string()) continue;  // skip malformed entries rather than throw
       if (!result.empty()) result += "&";
-      result += it->name.GetString();
+      result += it.key();
       result += "=";
-      result += Utils::UrlEncode(it->value.GetString());
+      result += Utils::UrlEncode(it.value().get<std::string>());
     }
     return result;
   };
 
-  if (headersDoc.HasMember("manifest") && headersDoc["manifest"].IsObject()) {
+  if (headersDoc.contains("manifest") && headersDoc["manifest"].is_object()) {
     std::string manifestHeaders = buildHeaderString(headersDoc["manifest"]);
     if (!manifestHeaders.empty()) {
       properties.emplace_back("inputstream.adaptive.manifest_headers", manifestHeaders);
     }
   }
-  if (headersDoc.HasMember("segment") && headersDoc["segment"].IsObject()) {
+  if (headersDoc.contains("segment") && headersDoc["segment"].is_object()) {
     std::string segmentHeaders = buildHeaderString(headersDoc["segment"]);
     if (!segmentHeaders.empty()) {
       properties.emplace_back("inputstream.adaptive.stream_headers", segmentHeaders);
@@ -647,11 +742,12 @@ PVR_ERROR CPVRUltimate::GetChannelGroupMembers(
 
 PVR_ERROR CPVRUltimate::GetEPGForChannel(int channelUid, time_t start, time_t end,
                                          kodi::addon::PVREPGTagsResultSet& results) {
+  if (!IsReady()) return PVR_ERROR_NO_ERROR;
 
   auto httpGet = [this](const std::string& endpoint) -> std::string {
     return this->HttpGet(this->BuildApiUrl(endpoint));
   };
-  auto parseJson = [](const std::string& response, rapidjson::Document& doc) -> bool {
+  auto parseJson = [](const std::string& response, nlohmann::json& doc) -> bool {
     return Utils::ParseJsonResponse(response, doc);
   };
   auto getChannelByUid = [this](int uid, UltimateChannel& channel) -> bool {
@@ -694,13 +790,18 @@ PVR_ERROR CPVRUltimate::GetEPGTagStreamProperties(
     const kodi::addon::PVREPGTag& tag,
     std::vector<kodi::addon::PVRStreamProperty>& properties) {
 
+  if (!IsReady()) {
+    kodi::Log(ADDON_LOG_WARNING, "GetEPGTagStreamProperties called before ready");
+    return PVR_ERROR_SERVER_ERROR;
+  }
+
   // Raw HttpGet - NOT wrapped with BuildApiUrl. getManifestUrl (below) already returns a
   // fully-qualified URL (same as the live channel path), so wrapping it again here would
   // double-prefix the scheme+host (e.g. "http://host:porthttp://host:port/api/...").
   auto httpGet = [this](const std::string& url) -> std::string {
     return this->HttpGet(url);
   };
-  auto parseJson = [](const std::string& response, rapidjson::Document& doc) -> bool {
+  auto parseJson = [](const std::string& response, nlohmann::json& doc) -> bool {
     return Utils::ParseJsonResponse(response, doc);
   };
   auto getChannelInfo = [this](int uid, std::string& provider, std::string& channelId, int& catchupHours) -> bool {
@@ -750,16 +851,19 @@ PVR_ERROR CPVRUltimate::GetEPGTagStreamProperties(
 // ============================================================================
 
 PVR_ERROR CPVRUltimate::GetRecordingsAmount(bool deleted, int& amount) {
+  if (!IsReady()) { amount = 0; return PVR_ERROR_NO_ERROR; }
   amount = m_recordingManager->GetRecordingsAmount(deleted);
   return PVR_ERROR_NO_ERROR;
 }
 
 PVR_ERROR CPVRUltimate::GetRecordings(bool deleted, kodi::addon::PVRRecordingsResultSet& results) {
+  if (!IsReady()) return PVR_ERROR_NO_ERROR;
   m_recordingManager->GetRecordings(deleted, results);
   return PVR_ERROR_NO_ERROR;
 }
 
 PVR_ERROR CPVRUltimate::DeleteRecording(const kodi::addon::PVRRecording& recording) {
+  if (!IsReady()) return PVR_ERROR_SERVER_ERROR;
   std::string recordingId = recording.GetRecordingId();
 
   auto buildApiUrl = [this](const std::string& endpoint) -> std::string {
@@ -780,6 +884,11 @@ PVR_ERROR CPVRUltimate::GetRecordingStreamProperties(
     const kodi::addon::PVRRecording& recording,
     std::vector<kodi::addon::PVRStreamProperty>& properties) {
 
+  if (!IsReady()) {
+    kodi::Log(ADDON_LOG_WARNING, "GetRecordingStreamProperties called before ready");
+    return PVR_ERROR_SERVER_ERROR;
+  }
+
   std::string recordingId = recording.GetRecordingId();
 
   auto buildApiUrl = [this](const std::string& endpoint) -> std::string {
@@ -788,7 +897,7 @@ PVR_ERROR CPVRUltimate::GetRecordingStreamProperties(
   auto httpGet = [this](const std::string& url) -> std::string {
     return this->HttpGet(url);
   };
-  auto parseJson = [](const std::string& response, rapidjson::Document& doc) -> bool {
+  auto parseJson = [](const std::string& response, nlohmann::json& doc) -> bool {
     return Utils::ParseJsonResponse(response, doc);
   };
   auto httpGetWithHeaders = [this](const std::string& url, std::string& response,
@@ -796,19 +905,27 @@ PVR_ERROR CPVRUltimate::GetRecordingStreamProperties(
     return this->HttpGetWithHeaders(url, response, drmConfigs, headers);
   };
 
+  std::string drmConfigsBase64, streamHeadersBase64;
   bool result = m_recordingManager->GetRecordingStreamProperties(recordingId, properties,
                                                                   buildApiUrl, httpGet, parseJson,
                                                                   httpGetWithHeaders,
-                                                                  m_supportsPiggyback.load());
+                                                                  m_supportsPiggyback.load(),
+                                                                  drmConfigsBase64,
+                                                                  streamHeadersBase64);
 
   if (!result) return PVR_ERROR_SERVER_ERROR;
 
-  // Apply DRM properties if needed. Recordings are DRM-looked-up via the
-  // /recordings/ endpoint (not /channels/), since rec->uniqueId is a
-  // recording id, not a channel id.
+  // Apply DRM properties. drmConfigsBase64 comes from the manifest response
+  // when piggyback is supported (previously discarded here - every
+  // DRM-protected recording silently fell through to a second, separate
+  // /drm lookup that does not carry the catchup-scoped auth context the
+  // piggybacked response does). Recordings are DRM-looked-up via the
+  // /recordings/ endpoint (not /channels/) as a fallback only, since
+  // rec->uniqueId is a recording id, not a channel id.
   if (auto* rec = m_recordingManager->FindRecording(recordingId)) {
-    ApplyDRMProperties(properties, rec->provider, rec->uniqueId, true, "", /*isRecording=*/true);
+    ApplyDRMProperties(properties, rec->provider, rec->uniqueId, true, drmConfigsBase64, /*isRecording=*/true);
   }
+  ApplyStreamHeaders(properties, streamHeadersBase64);
 
   return PVR_ERROR_NO_ERROR;
 }
@@ -823,21 +940,25 @@ PVR_ERROR CPVRUltimate::GetRecordingEdl(const kodi::addon::PVRRecording& recordi
 // ============================================================================
 
 PVR_ERROR CPVRUltimate::GetTimerTypes(std::vector<kodi::addon::PVRTimerType>& types) {
+  if (!IsReady()) return PVR_ERROR_NO_ERROR;
   m_timerManager->GetTimerTypes(types);
   return PVR_ERROR_NO_ERROR;
 }
 
 PVR_ERROR CPVRUltimate::GetTimersAmount(int& amount) {
+  if (!IsReady()) { amount = 0; return PVR_ERROR_NO_ERROR; }
   amount = m_timerManager->GetTimersAmount();
   return PVR_ERROR_NO_ERROR;
 }
 
 PVR_ERROR CPVRUltimate::GetTimers(kodi::addon::PVRTimersResultSet& results) {
+  if (!IsReady()) return PVR_ERROR_NO_ERROR;
   m_timerManager->GetTimers(results);
   return PVR_ERROR_NO_ERROR;
 }
 
 PVR_ERROR CPVRUltimate::AddTimer(const kodi::addon::PVRTimer& timer) {
+  if (!IsReady()) return PVR_ERROR_SERVER_ERROR;
   auto buildApiUrl = [this](const std::string& endpoint) -> std::string {
     return this->BuildApiUrl(endpoint);
   };
@@ -848,7 +969,7 @@ PVR_ERROR CPVRUltimate::AddTimer(const kodi::addon::PVRTimer& timer) {
     auto httpGet = [this](const std::string& endpoint) -> std::string {
       return this->HttpGet(this->BuildApiUrl(endpoint));
     };
-    auto parseJson = [](const std::string& response, rapidjson::Document& doc) -> bool {
+    auto parseJson = [](const std::string& response, nlohmann::json& doc) -> bool {
       return Utils::ParseJsonResponse(response, doc);
     };
     const auto& providers = m_providerManager->GetProviders();
@@ -865,6 +986,7 @@ PVR_ERROR CPVRUltimate::AddTimer(const kodi::addon::PVRTimer& timer) {
 }
 
 PVR_ERROR CPVRUltimate::DeleteTimer(const kodi::addon::PVRTimer& timer, bool forceDelete) {
+  if (!IsReady()) return PVR_ERROR_SERVER_ERROR;
   int clientIndex = timer.GetClientIndex();
 
   auto buildApiUrl = [this](const std::string& endpoint) -> std::string {
@@ -877,7 +999,7 @@ PVR_ERROR CPVRUltimate::DeleteTimer(const kodi::addon::PVRTimer& timer, bool for
     auto httpGet = [this](const std::string& endpoint) -> std::string {
       return this->HttpGet(this->BuildApiUrl(endpoint));
     };
-    auto parseJson = [](const std::string& response, rapidjson::Document& doc) -> bool {
+    auto parseJson = [](const std::string& response, nlohmann::json& doc) -> bool {
       return Utils::ParseJsonResponse(response, doc);
     };
     const auto& providers = m_providerManager->GetProviders();
@@ -892,6 +1014,7 @@ PVR_ERROR CPVRUltimate::DeleteTimer(const kodi::addon::PVRTimer& timer, bool for
 }
 
 PVR_ERROR CPVRUltimate::UpdateTimer(const kodi::addon::PVRTimer& timer) {
+  if (!IsReady()) return PVR_ERROR_SERVER_ERROR;
   auto buildApiUrl = [this](const std::string& endpoint) -> std::string {
     return this->BuildApiUrl(endpoint);
   };
@@ -902,7 +1025,7 @@ PVR_ERROR CPVRUltimate::UpdateTimer(const kodi::addon::PVRTimer& timer) {
     auto httpGet = [this](const std::string& endpoint) -> std::string {
       return this->HttpGet(this->BuildApiUrl(endpoint));
     };
-    auto parseJson = [](const std::string& response, rapidjson::Document& doc) -> bool {
+    auto parseJson = [](const std::string& response, nlohmann::json& doc) -> bool {
       return Utils::ParseJsonResponse(response, doc);
     };
     const auto& providers = m_providerManager->GetProviders();

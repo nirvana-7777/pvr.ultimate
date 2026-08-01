@@ -10,8 +10,21 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${PROJECT_SOURCE_DIR})
 
-# This will set RAPIDJSON_INCLUDE_DIRS
-find_package(RapidJSON REQUIRED)
+# nlohmann/json via FetchContent rather than find_package(nlohmann_json):
+# the addon builds on Linux/macOS/Windows CI runners and we don't want to
+# depend on the package being preinstalled (or installable the same way) on
+# all three - FetchContent pulls the exact pinned version uniformly
+# everywhere, same rationale as the existing dynamic toolchain discovery
+# below. Requires network access to github.com during configure (already
+# required elsewhere in this CI setup).
+include(FetchContent)
+FetchContent_Declare(
+        nlohmann_json
+        GIT_REPOSITORY https://github.com/nlohmann/json.git
+        GIT_TAG v3.11.3
+)
+FetchContent_MakeAvailable(nlohmann_json)
+
 find_package(Kodi REQUIRED)
 
 message(STATUS "KODI_INCLUDE_DIR=${KODI_INCLUDE_DIR}")
@@ -41,9 +54,12 @@ else()
 endif()
 
 # Explicitly set include directories
+# NOTE: nlohmann/json is consumed via the nlohmann_json::nlohmann_json
+# imported target (linked below, after build_addon()), not via a raw
+# include dir here - unlike RapidJSON, its CMake package doesn't expose an
+# *_INCLUDE_DIRS variable, so there is nothing to add to this list for it.
 include_directories(
         ${KODI_INCLUDE_DIR}
-        ${RAPIDJSON_INCLUDE_DIRS}
         ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
@@ -73,19 +89,21 @@ set(ULTIMATE_HEADERS
 addon_version(pvr.ultimate ULTIMATE)
 add_definitions(-DULTIMATE_VERSION=${ULTIMATE_VERSION})
 
-# If you need to pass flags to RapidJSON
-add_definitions(-DRAPIDJSON_HAS_STDSTRING=1)
-add_compile_options(-DRAPIDJSON_HAS_STDSTRING=1)
-
 # NOTE: build_addon() is what actually creates the pvr.ultimate target (via
 # ULTIMATE_SOURCES/ULTIMATE_HEADERS above). The target does not exist before
-# this call, so any target_include_directories(pvr.ultimate ...) must come
-# after it, not before -- calling it before would abort CMake configure
-# with "target ... which is not built by this project" and prevent
-# compile_commands.json from being (re)generated. The src/ include path is
-# already covered by the include_directories() call above, so no extra
-# target-scoped include is needed here.
+# this call, so any target_include_directories(pvr.ultimate ...) or
+# target_link_libraries(pvr.ultimate ...) must come after it, not before --
+# calling it before would abort CMake configure with "target ... which is
+# not built by this project" and prevent compile_commands.json from being
+# (re)generated. The src/ include path is already covered by the
+# include_directories() call above, so no extra target-scoped include is
+# needed here.
 build_addon(pvr.ultimate ULTIMATE DEPLIBS)
+
+# nlohmann/json is header-only but still needs to be linked as an imported
+# target so its include directory (managed internally by the target,
+# unlike RapidJSON's RAPIDJSON_INCLUDE_DIRS) is propagated to this build.
+target_link_libraries(pvr.ultimate PRIVATE nlohmann_json::nlohmann_json)
 
 set_target_properties(pvr.ultimate PROPERTIES
         CXX_STANDARD 20

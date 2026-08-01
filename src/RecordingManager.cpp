@@ -1,12 +1,13 @@
 #include "RecordingManager.h"
 #include "Utils.h"
+#include <kodi/General.h>
 #include <algorithm>
 
 const std::set<std::string> RecordingManager::PLAYABLE_STATUSES = {"COMPLETED", "RECORDING"};
 
 bool RecordingManager::LoadRecordings(const std::vector<UltimateProvider>& providers,
                                       const std::function<std::string(const std::string&)>& httpGet,
-                                      const std::function<bool(const std::string&, rapidjson::Document&)>& parseJson) {
+                                      const std::function<bool(const std::string&, nlohmann::json&)>& parseJson) {
   std::vector<UltimateRecording> newRecordings;
 
   for (const auto& provider : providers) {
@@ -23,66 +24,70 @@ bool RecordingManager::LoadRecordings(const std::vector<UltimateProvider>& provi
 
 void RecordingManager::LoadRecordingsForProvider(const std::string& provider,
                                                  const std::function<std::string(const std::string&)>& httpGet,
-                                                 const std::function<bool(const std::string&, rapidjson::Document&)>& parseJson,
+                                                 const std::function<bool(const std::string&, nlohmann::json&)>& parseJson,
                                                  std::vector<UltimateRecording>& outRecordings) {
-  std::string response = httpGet("/api/providers/" + provider + "/recordings");
-  if (response.empty()) return;
+  std::string url = "/api/providers/" + Utils::UrlPathEncode(provider) + "/recordings";
+  std::string response = httpGet(url);
+  if (response.empty()) {
+    kodi::Log(ADDON_LOG_WARNING, "Empty response from %s", Utils::RedactUrl(url).c_str());
+    return;
+  }
 
-  rapidjson::Document document;
+  nlohmann::json document;
   if (!parseJson(response, document)) return;
-  if (!document.HasMember("recordings") || !document["recordings"].IsArray()) return;
+  if (!document.contains("recordings") || !document["recordings"].is_array()) return;
 
-  for (const auto& recJson : document["recordings"].GetArray()) {
+  for (const auto& recJson : document["recordings"]) {
     UltimateRecording rec;
     rec.provider = provider;
 
-    if (recJson.HasMember("Id") && recJson["Id"].IsString())
-      rec.uniqueId = recJson["Id"].GetString();
+    if (recJson.contains("Id") && recJson["Id"].is_string())
+      rec.uniqueId = recJson["Id"].get<std::string>();
     else continue;
 
-    rec.title = (recJson.HasMember("Name") && recJson["Name"].IsString()) ? recJson["Name"].GetString() : rec.uniqueId;
-    rec.channelName = (recJson.HasMember("ChannelName") && recJson["ChannelName"].IsString()) ? recJson["ChannelName"].GetString() : "";
-    rec.channelUid = (recJson.HasMember("ChannelUid") && recJson["ChannelUid"].IsInt()) ? recJson["ChannelUid"].GetInt() : 0;
-    rec.isRadio = (recJson.HasMember("ChannelType") && recJson["ChannelType"].IsString() && std::string(recJson["ChannelType"].GetString()) == "RADIO");
+    rec.title = (recJson.contains("Name") && recJson["Name"].is_string()) ? recJson["Name"].get<std::string>() : rec.uniqueId;
+    rec.channelName = (recJson.contains("ChannelName") && recJson["ChannelName"].is_string()) ? recJson["ChannelName"].get<std::string>() : "";
+    rec.channelUid = (recJson.contains("ChannelUid") && recJson["ChannelUid"].is_number_integer()) ? recJson["ChannelUid"].get<int>() : 0;
+    rec.isRadio = (recJson.contains("ChannelType") && recJson["ChannelType"].is_string() && recJson["ChannelType"].get<std::string>() == "RADIO");
 
-    rec.startTime = (recJson.HasMember("RecordingTime") && recJson["RecordingTime"].IsString()) ? Utils::ParseISO8601(recJson["RecordingTime"].GetString()) : 0;
-    rec.durationSeconds = (recJson.HasMember("DurationSeconds") && recJson["DurationSeconds"].IsInt()) ? recJson["DurationSeconds"].GetInt() : 0;
+    rec.startTime = (recJson.contains("RecordingTime") && recJson["RecordingTime"].is_string()) ? Utils::ParseISO8601(recJson["RecordingTime"].get<std::string>()) : 0;
+    rec.durationSeconds = (recJson.contains("DurationSeconds") && recJson["DurationSeconds"].is_number_integer()) ? recJson["DurationSeconds"].get<int>() : 0;
     rec.endTime = rec.startTime + rec.durationSeconds;
-    rec.firstAired = (recJson.HasMember("FirstAired") && recJson["FirstAired"].IsString()) ? recJson["FirstAired"].GetString() : "";
+    rec.firstAired = (recJson.contains("FirstAired") && recJson["FirstAired"].is_string()) ? recJson["FirstAired"].get<std::string>() : "";
 
-    rec.seasonNumber = (recJson.HasMember("SeasonNumber") && recJson["SeasonNumber"].IsInt()) ? recJson["SeasonNumber"].GetInt() : 0;
-    rec.episodeNumber = (recJson.HasMember("EpisodeNumber") && recJson["EpisodeNumber"].IsInt()) ? recJson["EpisodeNumber"].GetInt() : 0;
-    rec.episodeName = (recJson.HasMember("EpisodeName") && recJson["EpisodeName"].IsString()) ? recJson["EpisodeName"].GetString() : "";
-    rec.seriesTitle = (recJson.HasMember("SeriesTitle") && recJson["SeriesTitle"].IsString()) ? recJson["SeriesTitle"].GetString() : "";
-    rec.seriesId = (recJson.HasMember("SeriesId") && recJson["SeriesId"].IsString()) ? recJson["SeriesId"].GetString() : "";
+    rec.seasonNumber = (recJson.contains("SeasonNumber") && recJson["SeasonNumber"].is_number_integer()) ? recJson["SeasonNumber"].get<int>() : 0;
+    rec.episodeNumber = (recJson.contains("EpisodeNumber") && recJson["EpisodeNumber"].is_number_integer()) ? recJson["EpisodeNumber"].get<int>() : 0;
+    rec.episodeName = (recJson.contains("EpisodeName") && recJson["EpisodeName"].is_string()) ? recJson["EpisodeName"].get<std::string>() : "";
+    rec.seriesTitle = (recJson.contains("SeriesTitle") && recJson["SeriesTitle"].is_string()) ? recJson["SeriesTitle"].get<std::string>() : "";
+    rec.seriesId = (recJson.contains("SeriesId") && recJson["SeriesId"].is_string()) ? recJson["SeriesId"].get<std::string>() : "";
 
-    rec.plot = (recJson.HasMember("Plot") && recJson["Plot"].IsString()) ? recJson["Plot"].GetString() : "";
-    rec.plotOutline = (recJson.HasMember("PlotOutline") && recJson["PlotOutline"].IsString()) ? recJson["PlotOutline"].GetString() : "";
-    rec.genreDescription = (recJson.HasMember("GenreDescription") && recJson["GenreDescription"].IsString()) ? recJson["GenreDescription"].GetString() : "";
-    rec.genreType = (recJson.HasMember("GenreType") && recJson["GenreType"].IsInt()) ? recJson["GenreType"].GetInt() : 0;
-    rec.genreSubType = (recJson.HasMember("GenreSubType") && recJson["GenreSubType"].IsInt()) ? recJson["GenreSubType"].GetInt() : 0;
+    rec.plot = (recJson.contains("Plot") && recJson["Plot"].is_string()) ? recJson["Plot"].get<std::string>() : "";
+    rec.plotOutline = (recJson.contains("PlotOutline") && recJson["PlotOutline"].is_string()) ? recJson["PlotOutline"].get<std::string>() : "";
+    rec.genreDescription = (recJson.contains("GenreDescription") && recJson["GenreDescription"].is_string()) ? recJson["GenreDescription"].get<std::string>() : "";
+    rec.genreType = (recJson.contains("GenreType") && recJson["GenreType"].is_number_integer()) ? recJson["GenreType"].get<int>() : 0;
+    rec.genreSubType = (recJson.contains("GenreSubType") && recJson["GenreSubType"].is_number_integer()) ? recJson["GenreSubType"].get<int>() : 0;
 
-    rec.iconPath = (recJson.HasMember("IconPath") && recJson["IconPath"].IsString()) ? recJson["IconPath"].GetString() : "";
-    rec.thumbnailUrl = (recJson.HasMember("ThumbnailUrl") && recJson["ThumbnailUrl"].IsString()) ? recJson["ThumbnailUrl"].GetString() : "";
-    rec.fanartUrl = (recJson.HasMember("FanartUrl") && recJson["FanartUrl"].IsString()) ? recJson["FanartUrl"].GetString() : "";
+    rec.iconPath = (recJson.contains("IconPath") && recJson["IconPath"].is_string()) ? recJson["IconPath"].get<std::string>() : "";
+    rec.thumbnailUrl = (recJson.contains("ThumbnailUrl") && recJson["ThumbnailUrl"].is_string()) ? recJson["ThumbnailUrl"].get<std::string>() : "";
+    rec.fanartUrl = (recJson.contains("FanartUrl") && recJson["FanartUrl"].is_string()) ? recJson["FanartUrl"].get<std::string>() : "";
 
-    rec.playCount = (recJson.HasMember("PlayCount") && recJson["PlayCount"].IsInt()) ? recJson["PlayCount"].GetInt() : 0;
-    rec.lastPlayedPosition = (recJson.HasMember("LastPlayedPosition") && recJson["LastPlayedPosition"].IsInt()) ? recJson["LastPlayedPosition"].GetInt() : 0;
+    rec.playCount = (recJson.contains("PlayCount") && recJson["PlayCount"].is_number_integer()) ? recJson["PlayCount"].get<int>() : 0;
+    rec.lastPlayedPosition = (recJson.contains("LastPlayedPosition") && recJson["LastPlayedPosition"].is_number_integer()) ? recJson["LastPlayedPosition"].get<int>() : 0;
 
-    rec.directory = (recJson.HasMember("Directory") && recJson["Directory"].IsString()) ? recJson["Directory"].GetString() : "";
-    rec.sizeInBytes = (recJson.HasMember("SizeInBytes") && recJson["SizeInBytes"].IsInt()) ? recJson["SizeInBytes"].GetInt() : 0;
-    rec.priority = (recJson.HasMember("Priority") && recJson["Priority"].IsInt()) ? recJson["Priority"].GetInt() : 0;
-    rec.lifetime = (recJson.HasMember("Lifetime") && recJson["Lifetime"].IsInt()) ? recJson["Lifetime"].GetInt() : 0;
-    rec.flags = (recJson.HasMember("Flags") && recJson["Flags"].IsString()) ? recJson["Flags"].GetString() : "";
-    rec.clientProviderUid = (recJson.HasMember("ClientProviderUid") && recJson["ClientProviderUid"].IsInt()) ? recJson["ClientProviderUid"].GetInt() : 0;
-    rec.providerName = (recJson.HasMember("ProviderName") && recJson["ProviderName"].IsString()) ? recJson["ProviderName"].GetString() : "";
+    rec.directory = (recJson.contains("Directory") && recJson["Directory"].is_string()) ? recJson["Directory"].get<std::string>() : "";
+    rec.sizeInBytes = (recJson.contains("SizeInBytes") && recJson["SizeInBytes"].is_number_integer()) ? recJson["SizeInBytes"].get<int>() : 0;
+    rec.priority = (recJson.contains("Priority") && recJson["Priority"].is_number_integer()) ? recJson["Priority"].get<int>() : 0;
+    rec.lifetime = (recJson.contains("Lifetime") && recJson["Lifetime"].is_number_integer()) ? recJson["Lifetime"].get<int>() : 0;
+    rec.flags = (recJson.contains("Flags") && recJson["Flags"].is_string()) ? recJson["Flags"].get<std::string>() : "";
+    rec.clientProviderUid = (recJson.contains("ClientProviderUid") && recJson["ClientProviderUid"].is_number_integer()) ? recJson["ClientProviderUid"].get<int>() : 0;
+    rec.providerName = (recJson.contains("ProviderName") && recJson["ProviderName"].is_string()) ? recJson["ProviderName"].get<std::string>() : "";
 
-    rec.epgEventId = (recJson.HasMember("EpgEventId") && recJson["EpgEventId"].IsInt()) ? recJson["EpgEventId"].GetInt() : 0;
-    rec.releaseYear = (recJson.HasMember("ReleaseYear") && recJson["ReleaseYear"].IsInt()) ? recJson["ReleaseYear"].GetInt() : 0;
+    rec.epgEventId = (recJson.contains("EpgEventId") && recJson["EpgEventId"].is_number_integer()) ? recJson["EpgEventId"].get<int>() : 0;
+    rec.releaseYear = (recJson.contains("ReleaseYear") && recJson["ReleaseYear"].is_number_integer()) ? recJson["ReleaseYear"].get<int>() : 0;
 
-    rec.status = (recJson.HasMember("Status") && recJson["Status"].IsString()) ? recJson["Status"].GetString() : "";
+    rec.status = (recJson.contains("Status") && recJson["Status"].is_string()) ? recJson["Status"].get<std::string>() : "";
     rec.isPlayable = (PLAYABLE_STATUSES.contains(rec.status));
-    rec.isDeleted = (recJson.HasMember("IsDeleted") && recJson["IsDeleted"].IsBool()) ? recJson["IsDeleted"].GetBool() : false;
+    rec.isDeleted = (recJson.contains("IsDeleted") && recJson["IsDeleted"].is_boolean()) ? recJson["IsDeleted"].get<bool>() : false;
 
     outRecordings.push_back(rec);
   }
@@ -179,7 +184,8 @@ bool RecordingManager::DeleteRecording(const std::string& recordingId,
 
   if (!found) return false;
 
-  if (!httpDelete(buildApiUrl("/api/providers/" + provider + "/recordings/" + recordingId))) {
+  if (!httpDelete(buildApiUrl("/api/providers/" + Utils::UrlPathEncode(provider) +
+                              "/recordings/" + Utils::UrlPathEncode(recordingId)))) {
     return false;
   }
 
@@ -197,11 +203,15 @@ bool RecordingManager::GetRecordingStreamProperties(const std::string& recording
                                                     std::vector<kodi::addon::PVRStreamProperty>& properties,
                                                     const std::function<std::string(const std::string&)>& buildApiUrl,
                                                     const std::function<std::string(const std::string&)>& httpGet,
-                                                    const std::function<bool(const std::string&, rapidjson::Document&)>& parseJson,
+                                                    const std::function<bool(const std::string&, nlohmann::json&)>& parseJson,
                                                     const std::function<bool(const std::string&, std::string&, std::string&, std::string&)>& httpGetWithHeaders,
-                                                    bool supportsPiggyback) {
+                                                    bool supportsPiggyback,
+                                                    std::string& drmConfigsBase64,
+                                                    std::string& streamHeadersBase64) {
   std::string provider, uniqueId;
-  
+  drmConfigsBase64.clear();
+  streamHeadersBase64.clear();
+
   {
     std::shared_lock<std::shared_mutex> lock(m_dataMutex);
     UltimateRecording* rec = FindRecording(recordingId);
@@ -210,8 +220,9 @@ bool RecordingManager::GetRecordingStreamProperties(const std::string& recording
     uniqueId = rec->uniqueId;
   }
 
-  std::string manifestUrl = buildApiUrl("/api/providers/" + provider + "/recordings/" + uniqueId + "/manifest");
-  std::string response, drmConfigsBase64, streamHeadersBase64;
+  std::string manifestUrl = buildApiUrl("/api/providers/" + Utils::UrlPathEncode(provider) +
+                                        "/recordings/" + Utils::UrlPathEncode(uniqueId) + "/manifest");
+  std::string response;
 
   if (supportsPiggyback) {
     if (!httpGetWithHeaders(manifestUrl, response, drmConfigsBase64, streamHeadersBase64)) return false;
@@ -220,12 +231,12 @@ bool RecordingManager::GetRecordingStreamProperties(const std::string& recording
     if (response.empty()) return false;
   }
 
-  rapidjson::Document document;
+  nlohmann::json document;
   if (!parseJson(response, document)) return false;
 
   std::string streamUrl;
-  if (document.HasMember("manifest_url") && document["manifest_url"].IsString()) {
-    streamUrl = document["manifest_url"].GetString();
+  if (document.contains("manifest_url") && document["manifest_url"].is_string()) {
+    streamUrl = document["manifest_url"].get<std::string>();
   } else return false;
 
   properties.emplace_back(PVR_STREAM_PROPERTY_INPUTSTREAM, "inputstream.adaptive");

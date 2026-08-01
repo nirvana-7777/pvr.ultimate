@@ -7,14 +7,14 @@
 #include <shared_mutex>
 #include <mutex>
 #include <functional>
-#include "rapidjson/document.h"
+#include <nlohmann/json.hpp>
 
 class ProviderManager {
 public:
     ProviderManager() = default;
 
     bool LoadProviders(const std::function<std::string(const std::string&)>& httpGet,
-                       const std::function<bool(const std::string&, rapidjson::Document&)>& parseJson);
+                       const std::function<bool(const std::string&, nlohmann::json&)>& parseJson);
 
     bool GetProviders(kodi::addon::PVRProvidersResultSet& results) const;
     int GetProvidersAmount() const;
@@ -31,6 +31,4 @@ private:
     std::vector<UltimateProvider> m_providers;
     std::map<std::string, int> m_providerIdMap;
     mutable std::shared_mutex m_dataMutex;
-
-    static bool IsProviderEnabled(const std::string& provider);
 };

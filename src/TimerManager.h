@@ -8,7 +8,7 @@
 #include <mutex>
 #include <functional>
 #include <string>
-#include "rapidjson/document.h"
+#include <nlohmann/json.hpp>
 
 class TimerManager {
 public:
@@ -16,11 +16,11 @@ public:
 
   bool LoadTimerTypes(const std::vector<UltimateProvider>& providers,
                       const std::function<std::string(const std::string&)>& httpGet,
-                      const std::function<bool(const std::string&, rapidjson::Document&)>& parseJson);
+                      const std::function<bool(const std::string&, nlohmann::json&)>& parseJson);
 
   bool LoadTimers(const std::vector<UltimateProvider>& providers,
                   const std::function<std::string(const std::string&)>& httpGet,
-                  const std::function<bool(const std::string&, rapidjson::Document&)>& parseJson);
+                  const std::function<bool(const std::string&, nlohmann::json&)>& parseJson);
 
   bool GetTimerTypes(std::vector<kodi::addon::PVRTimerType>& types) const;
   int GetTimersAmount() const;
@@ -55,12 +55,12 @@ public:
 private:
   static void LoadTimerTypesForProvider(const std::string& provider,
                                         const std::function<std::string(const std::string&)>& httpGet,
-                                        const std::function<bool(const std::string&, rapidjson::Document&)>& parseJson,
+                                        const std::function<bool(const std::string&, nlohmann::json&)>& parseJson,
                                         std::vector<UltimateTimerType>& outTimerTypes);
 
   static void LoadTimersForProvider(const std::string& provider,
                                     const std::function<std::string(const std::string&)>& httpGet,
-                                    const std::function<bool(const std::string&, rapidjson::Document&)>& parseJson,
+                                    const std::function<bool(const std::string&, nlohmann::json&)>& parseJson,
                                     std::vector<UltimateTimer>& outTimers);
 
   static bool MapTimerToKodi(const UltimateTimer& timer, kodi::addon::PVRTimer& kodiTimer);
