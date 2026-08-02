@@ -10,20 +10,21 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${PROJECT_SOURCE_DIR})
 
-# nlohmann/json via FetchContent rather than find_package(nlohmann_json):
-# the addon builds on Linux/macOS/Windows CI runners and we don't want to
-# depend on the package being preinstalled (or installable the same way) on
-# all three - FetchContent pulls the exact pinned version uniformly
-# everywhere, same rationale as the existing dynamic toolchain discovery
-# below. Requires network access to github.com during configure (already
-# required elsewhere in this CI setup).
-include(FetchContent)
-FetchContent_Declare(
-        nlohmann_json
-        GIT_REPOSITORY https://github.com/nlohmann/json.git
-        GIT_TAG v3.11.3
-)
-FetchContent_MakeAvailable(nlohmann_json)
+# nlohmann/json via find_package(), NOT FetchContent. This addon is built
+# through Kodi's own binary-addons bootstrap (cmake/addons), which has its
+# own dependency-resolution machinery keyed off find_package(X REQUIRED)
+# declarations in the addon's CMakeLists.txt - the CI workflow's separate
+# "apt-get install rapidjson-dev" / "brew install rapidjson" / "vcpkg
+# install rapidjson" steps exist specifically to satisfy that mechanism.
+# FetchContent is invisible to it: switching to FetchContent here caused
+# Kodi's own headers (kodi/addon-instance/PVR.h) to stop being found for
+# every source file in CI, even though nothing about how Kodi itself is
+# located was changed. find_package(nlohmann_json REQUIRED) matches the
+# exact declaration style RapidJSON used successfully in this same
+# pipeline, so the CI workflow's install steps must be updated in parallel
+# (see the accompanying workflow YAML diff) - swap the rapidjson package
+# for nlohmann-json's equivalent on each platform.
+find_package(nlohmann_json REQUIRED)
 
 find_package(Kodi REQUIRED)
 
