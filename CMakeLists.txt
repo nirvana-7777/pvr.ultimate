@@ -10,20 +10,16 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${PROJECT_SOURCE_DIR})
 
-# nlohmann/json via find_package(), NOT FetchContent. This addon is built
-# through Kodi's own binary-addons bootstrap (cmake/addons), which has its
-# own dependency-resolution machinery keyed off find_package(X REQUIRED)
-# declarations in the addon's CMakeLists.txt - the CI workflow's separate
-# "apt-get install rapidjson-dev" / "brew install rapidjson" / "vcpkg
-# install rapidjson" steps exist specifically to satisfy that mechanism.
-# FetchContent is invisible to it: switching to FetchContent here caused
-# Kodi's own headers (kodi/addon-instance/PVR.h) to stop being found for
-# every source file in CI, even though nothing about how Kodi itself is
-# located was changed. find_package(nlohmann_json REQUIRED) matches the
-# exact declaration style RapidJSON used successfully in this same
-# pipeline, so the CI workflow's install steps must be updated in parallel
-# (see the accompanying workflow YAML diff) - swap the rapidjson package
-# for nlohmann-json's equivalent on each platform.
+# This will set NLOHMANN_JSON_INCLUDE_DIRS. Resolved via the addon-supplied
+# Findnlohmann_json.cmake module (same mechanism/pattern the previous
+# FindRapidJSON.cmake used - see that file's CORE_SYSTEM_NAME branching,
+# which only makes sense invoked from within Kodi's own addon-dependency
+# staging, not a plain CMAKE_MODULE_PATH lookup at our own configure time).
+# If your addon repo has a depends.txt (or similar dependency manifest)
+# still listing "rapidjson", that needs to be updated to "nlohmann_json" too
+# - the Find module alone may not be sufficient if Kodi's bootstrap stages
+# dependencies from that manifest rather than (or in addition to) scanning
+# this file.
 find_package(nlohmann_json REQUIRED)
 
 find_package(Kodi REQUIRED)
@@ -55,12 +51,9 @@ else()
 endif()
 
 # Explicitly set include directories
-# NOTE: nlohmann/json is consumed via the nlohmann_json::nlohmann_json
-# imported target (linked below, after build_addon()), not via a raw
-# include dir here - unlike RapidJSON, its CMake package doesn't expose an
-# *_INCLUDE_DIRS variable, so there is nothing to add to this list for it.
 include_directories(
         ${KODI_INCLUDE_DIR}
+        ${NLOHMANN_JSON_INCLUDE_DIRS}
         ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
@@ -100,11 +93,6 @@ add_definitions(-DULTIMATE_VERSION=${ULTIMATE_VERSION})
 # include_directories() call above, so no extra target-scoped include is
 # needed here.
 build_addon(pvr.ultimate ULTIMATE DEPLIBS)
-
-# nlohmann/json is header-only but still needs to be linked as an imported
-# target so its include directory (managed internally by the target,
-# unlike RapidJSON's RAPIDJSON_INCLUDE_DIRS) is propagated to this build.
-target_link_libraries(pvr.ultimate PRIVATE nlohmann_json::nlohmann_json)
 
 set_target_properties(pvr.ultimate PROPERTIES
         CXX_STANDARD 20
