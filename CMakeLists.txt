@@ -51,8 +51,22 @@ else()
 endif()
 
 # Explicitly set include directories
+#
+# KODI_INCLUDE_DIR ends in "/kodi" (confirmed by find_package(Kodi)'s own
+# output), but source files use #include <kodi/addon-instance/PVR.h> - i.e.
+# they need the include path to be KODI_INCLUDE_DIR's PARENT, not
+# KODI_INCLUDE_DIR itself, for the literal "kodi/" segment in the include
+# directive to resolve. Depending on how Kodi's headers were staged for a
+# given build (system install vs. Kodi's own ExternalProject-based "depends"
+# staging), the on-disk layout has been observed to differ - some layouts
+# nest an extra "kodi/" folder under KODI_INCLUDE_DIR, others (confirmed via
+# this project's CI logs) place headers directly under it with no second
+# "kodi/" level. Adding both KODI_INCLUDE_DIR and its parent covers both
+# cases without needing to know in advance which one a given environment uses.
+get_filename_component(_ultimate_kodi_include_parent "${KODI_INCLUDE_DIR}" DIRECTORY)
 include_directories(
         ${KODI_INCLUDE_DIR}
+        ${_ultimate_kodi_include_parent}
         ${NLOHMANN_JSON_INCLUDE_DIRS}
         ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
