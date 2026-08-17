@@ -5,7 +5,7 @@
   name="Ultimate PVR Client"
   provider-name="UltimatePVR">
   <requires>@ADDON_DEPENDS@
-  <import addon="inputstream.adaptive" minversion="21.0.0"/>
+  <import addon="inputstream.adaptive" minversion="20.0.0"/>
   </requires>
   <extension
       point="kodi.pvrclient"
