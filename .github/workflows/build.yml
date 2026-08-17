@@ -15,22 +15,27 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Kodi 20 Nexus (Stable Release)
           - os: ubuntu-latest
-            kodi-branch: Nexus
+            kodi-branch: 20.2-Nexus
+          - os: macos-latest
+            kodi-branch: 20.2-Nexus
+          - os: windows-2022
+            kodi-branch: 20.2-Nexus
+
+          # Kodi 21 Omega (Stable Release)
           - os: ubuntu-latest
-            kodi-branch: Omega
+            kodi-branch: 21.3-Omega
+          - os: macos-latest
+            kodi-branch: 21.3-Omega
+          - os: windows-2022
+            kodi-branch: 21.3-Omega
+
+          # Kodi 22 Piers (Beta Tag)
           - os: ubuntu-latest
             kodi-branch: 22.0b1-Piers
           - os: macos-latest
-            kodi-branch: Nexus
-          - os: macos-latest
-            kodi-branch: Omega
-          - os: macos-latest
             kodi-branch: 22.0b1-Piers
-          - os: windows-2022
-            kodi-branch: Nexus
-          - os: windows-2022
-            kodi-branch: Omega
           - os: windows-2022
             kodi-branch: 22.0b1-Piers
 
