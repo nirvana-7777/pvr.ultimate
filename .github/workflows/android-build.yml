@@ -16,16 +16,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Nexus (v20)
-          - kodi-branch: Nexus
-            host: arm-linux-androideabi
-            abi: armeabi-v7a
-            ndk-version: r25c
-          - kodi-branch: Nexus
-            host: aarch64-linux-android
-            abi: arm64-v8a
-            ndk-version: r25c
-
           # Omega (v21)
           - kodi-branch: Omega
             host: arm-linux-androideabi
