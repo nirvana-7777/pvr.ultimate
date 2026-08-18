@@ -30,11 +30,11 @@ jobs:
           - kodi-branch: Omega
             host: arm-linux-androideabi
             abi: armeabi-v7a
-            ndk-version: r25c
+            ndk-version: r21e
           - kodi-branch: Omega
             host: aarch64-linux-android
             abi: arm64-v8a
-            ndk-version: r25c
+            ndk-version: r21e
 
           # Piers (v22 Beta 1 Tag)
           - kodi-branch: 22.0b1-Piers
