@@ -125,13 +125,16 @@ jobs:
             --with-sdk-path="${{ env.ANDROID_HOME }}" \
             --prefix="${{ github.workspace }}/kodi-deps" \
             --disable-debug
+      # "Build Kodi depends" step removed — Toolchain_binaddons.cmake is written by
+      # config.status during ./configure, not by `make`. Building the full depends
+      # tree pulls in fontconfig/ffmpeg/gnutls/etc. that pvr.ultimate doesn't need.
 
-      - name: Build Kodi depends
-        if: steps.cache-depends.outputs.cache-hit != 'true'
-        shell: bash
-        run: |
-          cd "${{ github.workspace }}/xbmc/tools/depends"
-          make -j$(nproc)
+#      - name: Build Kodi depends
+#        if: steps.cache-depends.outputs.cache-hit != 'true'
+#        shell: bash
+#        run: |
+#          cd "${{ github.workspace }}/xbmc/tools/depends"
+#          make -j$(nproc)
 
       - name: Locate toolchain file
         id: toolchain
