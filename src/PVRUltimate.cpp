@@ -144,7 +144,7 @@ void CPVRUltimate::InitializeAsync() {
   // else tells Kodi to re-check afterwards - these Trigger*Update() calls
   // are what asks Kodi to re-fetch now that data actually exists. Skipped
   // entirely if init was cancelled (stop/shutdown/OnSystemWake reload) so
-  // a torn-down instance doesn't fire callbacks into a dead PVR manager..
+  // a torn-down instance doesn't fire callbacks into a dead PVR manager.
   if (!m_stopInit.load()) {
     TriggerChannelUpdate();
     TriggerChannelGroupsUpdate();
