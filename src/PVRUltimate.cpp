@@ -135,6 +135,23 @@ void CPVRUltimate::InitializeAsync() {
   m_initialized = true;
   m_initRunning = false;
   m_initCv.notify_all();
+
+  // Kodi's initial PVR import runs concurrently with this background load
+  // (that's the whole point of doing this off the constructor thread), so
+  // it will very likely call GetChannels()/GetProviders()/etc. before
+  // m_initialized flips true above, get an empty-but-successful result via
+  // IsReady() gating, and consider its initial import complete. Nothing
+  // else tells Kodi to re-check afterwards - these Trigger*Update() calls
+  // are what asks Kodi to re-fetch now that data actually exists. Skipped
+  // entirely if init was cancelled (stop/shutdown/OnSystemWake reload) so
+  // a torn-down instance doesn't fire callbacks into a dead PVR manager.
+  if (!m_stopInit.load()) {
+    TriggerChannelUpdate();
+    TriggerChannelGroupsUpdate();
+    TriggerProvidersUpdate();
+    TriggerRecordingUpdate();
+    TriggerTimerUpdate();
+  }
 }
 
 void CPVRUltimate::DetectInputstreamVersion() {
@@ -155,24 +172,15 @@ void CPVRUltimate::DetectInputstreamVersion() {
 }
 
 void CPVRUltimate::DetectBackendCapabilities() {
-  m_supportsPiggyback = false;
-  std::string url = BuildApiUrl("/api/version");
-  std::string response = HttpGet(url);
-
-  if (!response.empty()) {
-    nlohmann::json doc;
-    if (Utils::ParseJsonResponse(response, doc) && doc.is_object()) {
-      if (doc.contains("features") && doc["features"].is_array()) {
-        for (const auto& feature : doc["features"]) {
-          if (feature.is_string() && std::string(feature.get<std::string>()) == "header_piggyback") {
-            m_supportsPiggyback = true;
-            kodi::Log(ADDON_LOG_INFO, "Backend supports header piggyback");
-            break;
-          }
-        }
-      }
-    }
-  }
+  // The backend (Bottle) has no /api/version endpoint - confirmed 404 - so
+  // there is nothing to probe here. The backend is confirmed to support
+  // piggybacking DRM configs / stream headers into manifest responses
+  // (drm_configs_base64 / stream_headers_base64 fields). HttpGetWithHeaders
+  // degrades safely to the non-piggyback path if a given response omits
+  // those fields, so hardcoding this is safe even for responses that don't
+  // include them.
+  m_supportsPiggyback = true;
+  kodi::Log(ADDON_LOG_INFO, "Header piggyback enabled (hardcoded, backend confirmed supported)");
 }
 
 bool CPVRUltimate::RetryBackendCall(const std::string& operationName) {
