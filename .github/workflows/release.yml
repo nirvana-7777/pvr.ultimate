@@ -28,9 +28,11 @@ jobs:
       - name: Read version from addon.xml.in
         id: get-version
         run: |
-          VERSION=$(python3 -c "
-          import xml.etree.ElementTree as ET
-          print(ET.parse('pvr.ultimate/addon.xml.in').getroot().attrib['version'])")
+          # addon.xml.in is a CMake template (contains @PLATFORM@ etc. in an
+          # attribute name), so it is NOT valid XML until configure_file()
+          # substitutes those placeholders. Pull the version out with a
+          # regex against the <addon ...> opening tag instead of parsing it.
+          VERSION=$(grep -m1 -oP 'version="\K[^"]+' pvr.ultimate/addon.xml.in)
           if [ -z "$VERSION" ]; then
             echo "Could not read version from addon.xml.in"; exit 1
           fi
