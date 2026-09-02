@@ -30,9 +30,17 @@ jobs:
         run: |
           # addon.xml.in is a CMake template (contains @PLATFORM@ etc. in an
           # attribute name), so it is NOT valid XML until configure_file()
-          # substitutes those placeholders. Pull the version out with a
-          # regex against the <addon ...> opening tag instead of parsing it.
-          VERSION=$(grep -m1 -oP 'version="\K[^"]+' pvr.ultimate/addon.xml.in)
+          # substitutes those placeholders — can't use a real XML parser.
+          # Isolate just the <addon ...> opening tag first (DOTALL, since it
+          # spans multiple lines) before pulling version= out of it, so a
+          # version= on some unrelated <import .../> inside <requires> can't
+          # be matched instead of the addon's own version.
+          VERSION=$(python3 -c "
+          import re
+          content = open('pvr.ultimate/addon.xml.in', encoding='utf-8').read()
+          tag = re.search(r'<addon\b(.*?)>', content, re.DOTALL).group(1)
+          print(re.search(r'version=\"([^\"]+)\"', tag).group(1))
+          ")
           if [ -z "$VERSION" ]; then
             echo "Could not read version from addon.xml.in"; exit 1
           fi
@@ -74,7 +82,11 @@ jobs:
         with:
           path: artifacts
           pattern: '${{ env.app_id }}-*'
-          merge-multiple: true
+          # No merge-multiple: keep each artifact in its own subfolder
+          # (named after its unique artifact name). Once the zip filenames
+          # below include kodi-branch/OS, this isn't strictly required
+          # anymore, but it's a second line of defense against any future
+          # naming collision silently dropping a build from the release.
 
       - name: List collected files
         run: find artifacts -type f -name '*.zip' -exec ls -lh {} \;
