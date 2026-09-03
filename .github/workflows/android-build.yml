@@ -120,12 +120,12 @@ jobs:
       # config.status during ./configure, not by `make`. Building the full depends
       # tree pulls in fontconfig/ffmpeg/gnutls/etc. that pvr.ultimate doesn't need.
 
-#      - name: Build Kodi depends
-#        if: steps.cache-depends.outputs.cache-hit != 'true'
-#        shell: bash
-#        run: |
-#          cd "${{ github.workspace }}/xbmc/tools/depends"
-#          make -j$(nproc)
+      #      - name: Build Kodi depends
+      #        if: steps.cache-depends.outputs.cache-hit != 'true'
+      #        shell: bash
+      #        run: |
+      #          cd "${{ github.workspace }}/xbmc/tools/depends"
+      #          make -j$(nproc)
 
       - name: Locate toolchain file
         id: toolchain
@@ -168,7 +168,7 @@ jobs:
           print(ET.parse('$ADDON_XML').getroot().attrib['version'])")
           
           mkdir -p "${{ env.app_id }}/build/zips"
-          ZIP_PATH="${{ github.workspace }}/${{ env.app_id }}/build/zips/${{ env.app_id }}-${ADDON_VERSION}-android-${{ matrix.abi }}.zip"
+          ZIP_PATH="${{ github.workspace }}/${{ env.app_id }}/build/zips/${{ env.app_id }}-${ADDON_VERSION}-android-${{ matrix.kodi-branch }}-${{ matrix.abi }}.zip"
           
           cd "${{ github.workspace }}/kodi-install"
           zip -r "$ZIP_PATH" "${{ env.app_id }}"

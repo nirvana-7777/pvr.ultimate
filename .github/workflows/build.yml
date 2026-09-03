@@ -150,7 +150,7 @@ jobs:
           echo "Packaging ${{ env.app_id }} version $ADDON_VERSION"
 
           mkdir -p "${{ env.app_id }}/build/zips"
-          ZIP_PATH="${{ github.workspace }}/${{ env.app_id }}/build/zips/${{ env.app_id }}-${ADDON_VERSION}.zip"
+          ZIP_PATH="${{ github.workspace }}/${{ env.app_id }}/build/zips/${{ env.app_id }}-${ADDON_VERSION}-${{ runner.os }}-${{ matrix.kodi-branch }}.zip"
 
           cd "${{ github.workspace }}/kodi-install"
           if [ "$RUNNER_OS" = "Windows" ]; then
