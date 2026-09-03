@@ -52,12 +52,20 @@ std::string Utils::UrlEncode(const std::string& value) {
   std::ostringstream escaped;
   escaped.fill('0');
   escaped << std::hex;
-  for (char c : value) {
+  // Iterate as unsigned char: isalnum()'s argument must be representable as
+  // unsigned char or EOF, and passing a negative char (any UTF-8 byte >=
+  // 0x80 - e.g. every continuation/lead byte of a German umlaut like
+  // "über"/"Dänemark") is undefined behaviour. glibc's ctype tables happen
+  // to tolerate the negative range, which masked this on desktop/Linux
+  // builds, but Android's Bionic libc does not behave the same way -
+  // exactly the platform (Kodi/Android SHIELD) where this surfaced as
+  // corrupted "postdata=" bodies that fail to parse as JSON server-side.
+  for (unsigned char c : value) {
     if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
-      escaped << c;
+      escaped << static_cast<char>(c);
     } else {
       escaped << std::uppercase;
-      escaped << '%' << std::setw(2) << int((unsigned char)c);
+      escaped << '%' << std::setw(2) << static_cast<int>(c);
       escaped << std::nouppercase;
     }
   }
