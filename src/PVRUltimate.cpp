@@ -285,7 +285,17 @@ std::string CPVRUltimate::HttpSendRequest(const std::string& url, const std::str
 
   // 3. Body anhängen (muss URL-encoded sein!)
   if (!body.empty()) {
-    formattedUrl += "&postdata=" + Utils::UrlEncode(body);
+    // TEMP DIAGNOSTIC (remove once the Invalid-JSON issue is confirmed
+    // fixed): log the exact outgoing body + its encoded form/length so it
+    // can be diffed against what the backend logs as received.
+    std::string encodedBody = Utils::UrlEncode(body);
+    kodi::Log(ADDON_LOG_DEBUG,
+              "HttpSendRequest: raw body (%zu bytes): %s",
+              body.size(), body.c_str());
+    kodi::Log(ADDON_LOG_DEBUG,
+              "HttpSendRequest: url-encoded postdata (%zu bytes): %s",
+              encodedBody.size(), encodedBody.c_str());
+    formattedUrl += "&postdata=" + encodedBody;
   }
 
   // 4. Auth/custom headers - restored: these were dropped entirely by the
