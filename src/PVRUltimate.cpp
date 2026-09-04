@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <thread>
 #include <chrono>
+#include <atomic>
 
 CPVRUltimate::CPVRUltimate()
     : m_backendUrl("127.0.0.1"),
@@ -284,18 +285,27 @@ std::string CPVRUltimate::HttpSendRequest(const std::string& url, const std::str
   }
 
   // 3. Body anhängen (muss URL-encoded sein!)
+  // TEMP DIAGNOSTIC: tag every request with a correlation ID so the resulting
+  // backend log line can be matched to this exact client-side log line with
+  // certainty, instead of guessing from timestamp proximity (which is how we
+  // likely mismatched a garbage-body log against an unrelated request last
+  // round).
+  static std::atomic<unsigned int> s_requestCounter{0};
+  std::string requestId = std::to_string(static_cast<long long>(time(nullptr))) +
+                           "-" + std::to_string(s_requestCounter.fetch_add(1));
+  formattedUrl += "&X-Request-Id=" + requestId;
+
   if (!body.empty()) {
-    // TEMP DIAGNOSTIC (remove once the Invalid-JSON issue is confirmed
-    // fixed): log the exact outgoing body + its encoded form/length so it
-    // can be diffed against what the backend logs as received.
     std::string encodedBody = Utils::UrlEncode(body);
     kodi::Log(ADDON_LOG_DEBUG,
-              "HttpSendRequest: raw body (%zu bytes): %s",
-              body.size(), body.c_str());
+              "HttpSendRequest[%s]: raw body (%zu bytes): %s",
+              requestId.c_str(), body.size(), body.c_str());
     kodi::Log(ADDON_LOG_DEBUG,
-              "HttpSendRequest: url-encoded postdata (%zu bytes): %s",
-              encodedBody.size(), encodedBody.c_str());
+              "HttpSendRequest[%s]: url-encoded postdata (%zu bytes): %s",
+              requestId.c_str(), encodedBody.size(), encodedBody.c_str());
     formattedUrl += "&postdata=" + encodedBody;
+  } else {
+    kodi::Log(ADDON_LOG_DEBUG, "HttpSendRequest[%s]: no body", requestId.c_str());
   }
 
   // 4. Auth/custom headers - restored: these were dropped entirely by the
