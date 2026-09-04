@@ -7,6 +7,7 @@ class Utils {
 public:
     static bool ParseJsonResponse(const std::string& response, nlohmann::json& document);
     static std::string Base64Decode(const std::string& base64Data);
+    static std::string Base64Encode(const std::string& data);
     static std::string UrlEncode(const std::string& value);
     static std::string ConvertDrmJsonToLegacy(const nlohmann::json& drmJson);
     static time_t ParseISO8601(const std::string& isoString);
