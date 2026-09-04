@@ -296,12 +296,18 @@ std::string CPVRUltimate::HttpSendRequest(const std::string& url, const std::str
   formattedUrl += "&X-Request-Id=" + requestId;
 
   if (!body.empty()) {
-    std::string encodedBody = Utils::UrlEncode(body);
+    // postdata must be base64 per Kodi's documented CURL protocol-option
+    // contract (see comment on Utils::Base64Encode) - but like every other
+    // value on this URL (Authorization etc. below), it also needs
+    // percent-encoding so Kodi's own '|'/'&'/'='-delimited option parser
+    // doesn't misinterpret base64's '+', '/', '=' characters as URL syntax
+    // before it ever gets to the postdata-specific base64 decode.
+    std::string encodedBody = Utils::UrlEncode(Utils::Base64Encode(body));
     kodi::Log(ADDON_LOG_DEBUG,
               "HttpSendRequest[%s]: raw body (%zu bytes): %s",
               requestId.c_str(), body.size(), body.c_str());
     kodi::Log(ADDON_LOG_DEBUG,
-              "HttpSendRequest[%s]: url-encoded postdata (%zu bytes): %s",
+              "HttpSendRequest[%s]: base64+url-encoded postdata (%zu bytes): %s",
               requestId.c_str(), encodedBody.size(), encodedBody.c_str());
     formattedUrl += "&postdata=" + encodedBody;
   } else {

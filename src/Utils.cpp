@@ -48,6 +48,56 @@ std::string Utils::Base64Decode(const std::string& base64Data) {
   return ret;
 }
 
+std::string Utils::Base64Encode(const std::string& data) {
+  // Required for Kodi's CURL "postdata" protocol option, which - unlike
+  // every other option on that URL ('|Content-Type=...&customrequest=...'
+  // etc, which are passed through as literal HTTP headers) - is specially
+  // intercepted by Kodi's own URL-option parser and MUST be base64, per the
+  // kodi-dev-kit docs (ADDON_CURL_OPTION_PROTOCOL: "postdata - Set the post
+  // body (value needs to be base64 encoded)"). Percent-encoding it (the
+  // previous approach here, and in Utils::UrlEncode more generally) silently
+  // produces a garbled request body once Kodi base64-decodes it internally -
+  // this was the real root cause of the "Invalid JSON" errors traced through
+  // this whole debugging session.
+  static const std::string base64_chars =
+      "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+      "abcdefghijklmnopqrstuvwxyz"
+      "0123456789+/";
+
+  std::string ret;
+  ret.reserve(((data.size() + 2) / 3) * 4);
+
+  size_t i = 0;
+  while (i + 2 < data.size()) {
+    unsigned int n = (static_cast<unsigned char>(data[i]) << 16) |
+                      (static_cast<unsigned char>(data[i + 1]) << 8) |
+                      static_cast<unsigned char>(data[i + 2]);
+    ret.push_back(base64_chars[(n >> 18) & 0x3F]);
+    ret.push_back(base64_chars[(n >> 12) & 0x3F]);
+    ret.push_back(base64_chars[(n >> 6) & 0x3F]);
+    ret.push_back(base64_chars[n & 0x3F]);
+    i += 3;
+  }
+
+  size_t remaining = data.size() - i;
+  if (remaining == 1) {
+    unsigned int n = static_cast<unsigned char>(data[i]) << 16;
+    ret.push_back(base64_chars[(n >> 18) & 0x3F]);
+    ret.push_back(base64_chars[(n >> 12) & 0x3F]);
+    ret.push_back('=');
+    ret.push_back('=');
+  } else if (remaining == 2) {
+    unsigned int n = (static_cast<unsigned char>(data[i]) << 16) |
+                      (static_cast<unsigned char>(data[i + 1]) << 8);
+    ret.push_back(base64_chars[(n >> 18) & 0x3F]);
+    ret.push_back(base64_chars[(n >> 12) & 0x3F]);
+    ret.push_back(base64_chars[(n >> 6) & 0x3F]);
+    ret.push_back('=');
+  }
+
+  return ret;
+}
+
 std::string Utils::UrlEncode(const std::string& value) {
   std::ostringstream escaped;
   escaped.fill('0');
