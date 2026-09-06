@@ -3,6 +3,7 @@
 #include <kodi/General.h>
 #include <sstream>
 #include <ctime>
+#include <mutex>
 #include <algorithm>
 #include <vector>
 
