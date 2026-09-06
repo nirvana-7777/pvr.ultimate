@@ -3,6 +3,8 @@
 #include "Models.h"
 #include <kodi/addon-instance/PVR.h>
 #include <vector>
+#include <map>
+#include <shared_mutex>
 #include <functional>
 #include <string>
 #include <nlohmann/json.hpp>
@@ -54,10 +56,34 @@ public:
                                           std::string& drmConfigsBase64,
                                           std::string& streamHeadersBase64);
 
+    // Look up the provider-native listing guid (e.g. "das_erste_hd_031eace5")
+    // for a broadcast previously seen via GetEPGForChannel, keyed by the same
+    // locally-computed UniqueBroadcastId Kodi will echo back on the PVRTimer
+    // when the user schedules a recording for that EPG entry. Returns an
+    // empty string if the broadcast hasn't been parsed (yet, or ever) in
+    // this session, or if the backend didn't provide epg_event_id for it -
+    // callers must treat that as "no listing guid available", not an error.
+    static std::string GetEpgEventId(unsigned int broadcastId);
+
 private:
     // Shared parsing logic - single source of truth for EPG JSON -> PVREPGTag mapping.
     static bool ParseEPGResponse(const std::string& response,
                                  int channelUid,
                                  const std::function<bool(const std::string&, nlohmann::json&)>& parseJson,
                                  kodi::addon::PVREPGTagsResultSet& results);
+
+    // broadcastId -> epg_event_id (listing guid), populated in ParseEPGResponse.
+    // Static/process-lifetime cache, not per-instance: TimerManager::AddTimer needs
+    // to look this up independently of whatever EPGManager instance (if any) last
+    // parsed the relevant channel's grid - mirroring the fact that every method on
+    // this class is already static with no per-instance state.
+    //
+    // Unbounded growth guard: capped and cleared wholesale past
+    // kMaxCacheEntries rather than evicted piecemeal (LRU bookkeeping isn't
+    // worth it here) - see the cap check in ParseEPGResponse. Losing old
+    // entries just means GetEpgEventId returns "" for a broadcast that was
+    // only seen a long time ago, which callers already have to handle.
+    static std::map<unsigned int, std::string> s_epgEventIdCache;
+    static std::shared_mutex s_epgEventIdCacheMutex;
+    static constexpr size_t kMaxCacheEntries = 200000;
 };

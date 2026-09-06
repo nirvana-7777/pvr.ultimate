@@ -1,5 +1,6 @@
 #include "TimerManager.h"
 #include "Utils.h"
+#include "EPGManager.h"
 
 bool TimerManager::LoadTimerTypes(const std::vector<UltimateProvider>& providers,
                                   const std::function<std::string(const std::string&)>& httpGet,
@@ -332,7 +333,11 @@ bool TimerManager::AddTimer(const kodi::addon::PVRTimer& timer,
   if (!ultimateTimer.epgSearchString.empty())
     doc["epg_search_string"] = ultimateTimer.epgSearchString;
   doc["full_text_epg_search"] = ultimateTimer.fullTextEpgSearch;
-  if (ultimateTimer.epgUid > 0) doc["epg_uid"] = ultimateTimer.epgUid;
+  if (ultimateTimer.epgUid > 0) {
+    doc["epg_uid"] = ultimateTimer.epgUid;
+    std::string epgEventId = EPGManager::GetEpgEventId(static_cast<unsigned int>(ultimateTimer.epgUid));
+    if (!epgEventId.empty()) doc["epg_event_id"] = epgEventId;
+  }
 
   if (!httpPost(buildApiUrl("/api/providers/" + Utils::UrlPathEncode(provider) + "/timers"), doc.dump())) {
     return false;
@@ -406,7 +411,11 @@ bool TimerManager::UpdateTimer(const kodi::addon::PVRTimer& timer,
   if (!updatedTimer.epgSearchString.empty())
     doc["epg_search_string"] = updatedTimer.epgSearchString;
   doc["full_text_epg_search"] = updatedTimer.fullTextEpgSearch;
-  if (updatedTimer.epgUid > 0) doc["epg_uid"] = updatedTimer.epgUid;
+  if (updatedTimer.epgUid > 0) {
+    doc["epg_uid"] = updatedTimer.epgUid;
+    std::string epgEventId = EPGManager::GetEpgEventId(static_cast<unsigned int>(updatedTimer.epgUid));
+    if (!epgEventId.empty()) doc["epg_event_id"] = epgEventId;
+  }
 
   if (!httpPut(buildApiUrl("/api/providers/" + Utils::UrlPathEncode(updatedTimer.provider) + "/timers/" + std::to_string(clientIndex)),
                doc.dump())) {

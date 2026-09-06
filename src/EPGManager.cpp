@@ -6,6 +6,9 @@
 #include <algorithm>
 #include <vector>
 
+std::map<unsigned int, std::string> EPGManager::s_epgEventIdCache;
+std::shared_mutex EPGManager::s_epgEventIdCacheMutex;
+
 // Shared parsing logic - single source of truth for EPG JSON -> PVREPGTag mapping.
 bool EPGManager::ParseEPGResponse(const std::string& response,
                                    int channelUid,
@@ -41,6 +44,24 @@ bool EPGManager::ParseEPGResponse(const std::string& response,
     tag.SetUniqueChannelId(channelUid);
     tag.SetStartTime(static_cast<time_t>(eStart));
     tag.SetEndTime(static_cast<time_t>(eEnd));
+
+    // Cache the provider-native listing guid (if the backend sent one) against
+    // this broadcast's id, so TimerManager::AddTimer can resolve it later from
+    // just the PVRTimer's iEpgUid - Kodi's timer API has no field to carry an
+    // arbitrary string through from the EPG tag, so this cache is the bridge.
+    if (epgItem.contains("epg_event_id") && epgItem["epg_event_id"].is_string()) {
+      std::string epgEventId = epgItem["epg_event_id"].get<std::string>();
+      if (!epgEventId.empty()) {
+        std::unique_lock<std::shared_mutex> lock(s_epgEventIdCacheMutex);
+        if (s_epgEventIdCache.size() >= kMaxCacheEntries) {
+          kodi::Log(ADDON_LOG_DEBUG,
+                    "EPGManager: epg_event_id cache hit cap (%zu entries), clearing",
+                    s_epgEventIdCache.size());
+          s_epgEventIdCache.clear();
+        }
+        s_epgEventIdCache[broadcastId] = std::move(epgEventId);
+      }
+    }
 
     std::string title;
     if (epgItem.contains("title") && epgItem["title"].is_string())
@@ -212,6 +233,13 @@ bool EPGManager::GetEPGForChannel(int channelUid, time_t start, time_t end,
   if (response.empty()) return false;
 
   return ParseEPGResponse(response, channelUid, parseJson, results);
+}
+
+std::string EPGManager::GetEpgEventId(unsigned int broadcastId) {
+  std::shared_lock<std::shared_mutex> lock(s_epgEventIdCacheMutex);
+  auto it = s_epgEventIdCache.find(broadcastId);
+  if (it == s_epgEventIdCache.end()) return "";
+  return it->second;
 }
 
 bool EPGManager::IsEPGTagRecordable(const kodi::addon::PVREPGTag& tag, bool& isRecordable) {
