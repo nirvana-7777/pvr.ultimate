@@ -34,7 +34,7 @@ public:
     void UnlockUnique() const { m_dataMutex.unlock(); }
 
 private:
-    static void LoadChannelsForProvider(const std::string& provider, int providerIndex,
+    static void LoadChannelsForProvider(const std::string& provider, int providerUniqueId, int providerIndex,
                                         const std::function<std::string(const std::string&)>& httpGet,
                                         const std::function<bool(const std::string&, nlohmann::json&)>& parseJson,
                                         std::vector<UltimateChannel>& outChannels,

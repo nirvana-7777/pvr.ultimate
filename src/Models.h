@@ -17,6 +17,7 @@ struct UltimateChannel {
   std::string channelName;
   std::string iconPath;
   std::string provider;
+  int providerUniqueId = 0;
   std::string channelId;
   bool isRadio = false;
 

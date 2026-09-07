@@ -31,7 +31,7 @@ bool ChannelManager::LoadChannels(const std::vector<UltimateProvider>& providers
   for (size_t providerIndex = 0; providerIndex < providers.size(); ++providerIndex) {
     const auto& provider = providers[providerIndex];
     if (provider.enabled) {
-      LoadChannelsForProvider(provider.name, static_cast<int>(providerIndex),
+      LoadChannelsForProvider(provider.name, provider.uniqueId, static_cast<int>(providerIndex),
                               httpGet, parseJson, newChannels, newLookup);
     }
   }
@@ -47,7 +47,7 @@ bool ChannelManager::LoadChannels(const std::vector<UltimateProvider>& providers
   return !m_channels.empty();
 }
 
-void ChannelManager::LoadChannelsForProvider(const std::string& provider, int providerIndex,
+void ChannelManager::LoadChannelsForProvider(const std::string& provider, int providerUniqueId, int providerIndex,
                                              const std::function<std::string(const std::string&)>& httpGet,
                                              const std::function<bool(const std::string&, nlohmann::json&)>& parseJson,
                                              std::vector<UltimateChannel>& outChannels,
@@ -92,6 +92,7 @@ void ChannelManager::LoadChannelsForProvider(const std::string& provider, int pr
   for (const auto& channelJson : channelsArray) {
     UltimateChannel channel;
     channel.provider = provider;
+    channel.providerUniqueId = providerUniqueId;
 
     channel.channelName = (channelJson.contains("Name") && channelJson["Name"].is_string())
                           ? channelJson["Name"].get<std::string>() : "Unknown";
@@ -169,6 +170,7 @@ bool ChannelManager::GetChannels(bool radio, kodi::addon::PVRChannelsResultSet& 
       kodiChannel.SetChannelNumber(channel.channelNumber);
       kodiChannel.SetChannelName(channel.channelName);
       kodiChannel.SetIconPath(channel.iconPath);
+      kodiChannel.SetClientProviderUid(channel.providerUniqueId);
       results.Add(kodiChannel);
     }
   }
