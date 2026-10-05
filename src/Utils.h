@@ -29,4 +29,8 @@ public:
 
     // Safe integer parsing from string (no exceptions).
     static int SafeStoi(const std::string& str, int defaultValue = 0);
+
+    // Extract the numeric HTTP status code from a response protocol line such
+    // as "HTTP/1.1 204 No Content". Returns 0 when no status can be parsed.
+    static int ParseHttpStatusCode(const std::string& protocolLine);
 };

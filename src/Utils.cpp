@@ -312,3 +312,12 @@ int Utils::SafeStoi(const std::string& str, int defaultValue) {
     return defaultValue;
   }
 }
+
+int Utils::ParseHttpStatusCode(const std::string& protocolLine) {
+  // Expected form: "HTTP/1.1 204 No Content" - the status code is the first
+  // integer token after the "HTTP/x.y" prefix.
+  size_t spacePos = protocolLine.find(' ');
+  if (spacePos == std::string::npos) return 0;
+  while (spacePos < protocolLine.size() && protocolLine[spacePos] == ' ') ++spacePos;
+  return SafeStoi(protocolLine.substr(spacePos), 0);
+}

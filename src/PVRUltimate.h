@@ -138,7 +138,10 @@ private:
   bool HttpPost(const std::string& url, const std::string& body);
 
   bool HttpPut(const std::string& url, const std::string& body);
-  std::string HttpSendRequest(const std::string& url, const std::string& method, const std::string& body);
+  // httpStatus (when non-null) receives the parsed HTTP response status code,
+  // or 0 if it could not be determined. The body is still returned directly.
+  std::string HttpSendRequest(const std::string& url, const std::string& method,
+                              const std::string& body, int* httpStatus = nullptr);
 
   // Core methods
   bool RetryBackendCall(const std::string& operationName);

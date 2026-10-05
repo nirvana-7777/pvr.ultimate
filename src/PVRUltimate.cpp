@@ -266,7 +266,9 @@ std::string CPVRUltimate::BuildApiUrl(const std::string& endpoint) {
   return url.str();
 }
 
-std::string CPVRUltimate::HttpSendRequest(const std::string& url, const std::string& method, const std::string& body) {
+std::string CPVRUltimate::HttpSendRequest(const std::string& url, const std::string& method,
+                                          const std::string& body, int* httpStatus) {
+  if (httpStatus) *httpStatus = 0;
   kodi::Log(ADDON_LOG_DEBUG, "HTTP %s: %s", method.c_str(), Utils::RedactUrl(url).c_str());
 
   std::string apiKey, customHeaders;
@@ -352,6 +354,16 @@ std::string CPVRUltimate::HttpSendRequest(const std::string& url, const std::str
   while ((bytesRead = file.Read(buffer, sizeof(buffer))) > 0) {
     content.append(buffer, bytesRead);
   }
+
+  // Read the real HTTP status (e.g. "HTTP/1.1 204 No Content"). Needed because
+  // write methods (DELETE/POST/PUT) legitimately return an empty body on
+  // success (204), while failures return a non-empty JSON error body - so body
+  // emptiness is the inverse of success and must not be used as the signal.
+  if (httpStatus) {
+    std::string protoLine = file.GetPropertyValue(ADDON_FILE_PROPERTY_RESPONSE_PROTOCOL, "");
+    *httpStatus = Utils::ParseHttpStatusCode(protoLine);
+  }
+
   file.Close();
   return content;
 }
@@ -375,27 +387,41 @@ std::string CPVRUltimate::HttpGet(const std::string& url) {
 }
 
 bool CPVRUltimate::HttpDelete(const std::string& url) {
-  std::string resp = HttpSendRequest(url, "DELETE", "");
-  if (resp.empty()) {
-    kodi::Log(ADDON_LOG_ERROR, "HTTP DELETE failed: %s", Utils::RedactUrl(url).c_str());
+  int status = 0;
+  std::string resp = HttpSendRequest(url, "DELETE", "", &status);
+  // Success is a 2xx status, NOT a non-empty body: a successful DELETE returns
+  // 204 No Content (empty body), while failures (404/409/500) return a
+  // non-empty JSON error body. If no status could be parsed, fall back to the
+  // old body-presence heuristic so behaviour never regresses on backends/
+  // protocol handlers that do not expose a status line.
+  bool ok = (status >= 200 && status < 300) || (status == 0 && !resp.empty());
+  if (!ok) {
+    kodi::Log(ADDON_LOG_ERROR, "HTTP DELETE failed [%d]: %s %s",
+              status, Utils::RedactUrl(url).c_str(), resp.c_str());
     return false;
   }
   return true;
 }
 
 bool CPVRUltimate::HttpPost(const std::string& url, const std::string& body) {
-  std::string resp = HttpSendRequest(url, "POST", body);
-  if (resp.empty()) {
-    kodi::Log(ADDON_LOG_ERROR, "HTTP POST failed: %s", Utils::RedactUrl(url).c_str());
+  int status = 0;
+  std::string resp = HttpSendRequest(url, "POST", body, &status);
+  bool ok = (status >= 200 && status < 300) || (status == 0 && !resp.empty());
+  if (!ok) {
+    kodi::Log(ADDON_LOG_ERROR, "HTTP POST failed [%d]: %s %s",
+              status, Utils::RedactUrl(url).c_str(), resp.c_str());
     return false;
   }
   return true;
 }
 
 bool CPVRUltimate::HttpPut(const std::string& url, const std::string& body) {
-  std::string resp = HttpSendRequest(url, "PUT", body);
-  if (resp.empty()) {
-    kodi::Log(ADDON_LOG_ERROR, "HTTP PUT failed: %s", Utils::RedactUrl(url).c_str());
+  int status = 0;
+  std::string resp = HttpSendRequest(url, "PUT", body, &status);
+  bool ok = (status >= 200 && status < 300) || (status == 0 && !resp.empty());
+  if (!ok) {
+    kodi::Log(ADDON_LOG_ERROR, "HTTP PUT failed [%d]: %s %s",
+              status, Utils::RedactUrl(url).c_str(), resp.c_str());
     return false;
   }
   return true;
@@ -910,6 +936,11 @@ PVR_ERROR CPVRUltimate::DeleteRecording(const kodi::addon::PVRRecording& recordi
   if (!m_recordingManager->DeleteRecording(recordingId, buildApiUrl, httpDelete)) {
     return PVR_ERROR_SERVER_ERROR;
   }
+
+  // Ask Kodi to re-fetch the recordings list so the just-deleted entry is
+  // removed from the UI (DeleteRecording only flips the in-memory isDeleted
+  // flag; without this trigger Kodi keeps showing the stale entry).
+  TriggerRecordingUpdate();
 
   return PVR_ERROR_NO_ERROR;
 }
