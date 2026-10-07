@@ -330,6 +330,9 @@ bool EPGManager::GetEPGTagStreamProperties(const kodi::addon::PVREPGTag& tag,
   }
 
   std::string streamUrl = document["catchup_stream_url_template"].get<std::string>();
+  kodi::Log(ADDON_LOG_INFO,
+            "EPG catchup template loaded for %s/%s: %s",
+            provider.c_str(), channelId.c_str(), streamUrl.c_str());
 
   auto hasPlaceholder = [&streamUrl](const std::string& placeholder) {
     return streamUrl.find(placeholder) != std::string::npos;
@@ -362,6 +365,14 @@ bool EPGManager::GetEPGTagStreamProperties(const kodi::addon::PVREPGTag& tag,
   substitute("{end_time}", std::to_string(tag.GetEndTime()));
   substitute("{epg_id}", std::to_string(broadcastId));
   if (hasPlaceholder("{country}")) substitute("{country}", channel.country);
+
+  kodi::Log(ADDON_LOG_INFO,
+            "EPG catchup URL resolved for channelUid=%d broadcastId=%u start=%ld end=%ld => %s",
+            channelUid,
+            broadcastId,
+            static_cast<long>(tag.GetStartTime()),
+            static_cast<long>(tag.GetEndTime()),
+            streamUrl.c_str());
 
   properties.emplace_back(PVR_STREAM_PROPERTY_INPUTSTREAM, "inputstream.adaptive");
   properties.emplace_back(PVR_STREAM_PROPERTY_STREAMURL, streamUrl);

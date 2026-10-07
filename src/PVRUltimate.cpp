@@ -20,7 +20,8 @@ CPVRUltimate::CPVRUltimate()
       m_useModernDrm(false),
       m_useDatabaseEpg(false),
       m_epgServiceUrl("http://localhost:8080") {
-  kodi::Log(ADDON_LOG_INFO, "Ultimate PVR Client starting...");
+  kodi::Log(ADDON_LOG_INFO,
+            "Ultimate PVR Client starting... [catchup debug marker active: pvr.ultimate EPG stream patch loaded]");
 
   // Initialize managers
   m_providerManager = std::make_unique<ProviderManager>();
