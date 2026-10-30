@@ -79,11 +79,8 @@ public:
 
   PVR_ERROR OnSystemWake() override;
 
-  // Provider selection dialog (opened from the addon settings and, as a fallback
-  // for Kodi versions that do not list settings hooks, from the channel context menu).
+  // Provider selection dialog, opened from the addon settings (settings hook).
   PVR_ERROR CallSettingsMenuHook(const kodi::addon::PVRMenuhook& menuhook) override;
-  PVR_ERROR CallChannelMenuHook(const kodi::addon::PVRMenuhook& menuhook,
-                                const kodi::addon::PVRChannel& item) override;
 
 private:
   // Configuration
@@ -116,6 +113,7 @@ private:
   // destructor signals m_stopInit and joins the thread so no callback fires
   // into a partially-destroyed object.
   std::thread m_initThread;
+  std::thread m_uiThread;  // runs the provider selection dialog off the GUI thread
   std::atomic<bool> m_stopInit{false};
   std::atomic<bool> m_initRunning{false};
   std::atomic<bool> m_initialized{false};

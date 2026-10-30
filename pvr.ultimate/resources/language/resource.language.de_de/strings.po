@@ -80,3 +80,19 @@ msgctxt "#30922"
 msgid "No providers available"
 msgstr "Keine Provider verfügbar"
 
+msgctxt "#30923"
+msgid "Providers"
+msgstr "Provider"
+
+msgctxt "#30924"
+msgid "Provider selection"
+msgstr "Providerauswahl"
+
+msgctxt "#30925"
+msgid "Select providers (opens after you confirm with OK)"
+msgstr "Provider auswählen (öffnet sich nach Bestätigen mit OK)"
+
+msgctxt "#30926"
+msgid "Switch on and confirm with OK to open the provider selection. Only affects this client, not the backend."
+msgstr "Einschalten und mit OK bestätigen, um die Providerauswahl zu öffnen. Wirkt nur auf diesen Client, nicht auf das Backend."
+

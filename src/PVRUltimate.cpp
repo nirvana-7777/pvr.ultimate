@@ -37,11 +37,10 @@ CPVRUltimate::CPVRUltimate()
 
   DetectInputstreamVersion();
 
-  // 30900 = "Select providers..." (strings.po). SETTING hooks show up as an action
-  // button in the addon settings dialog; the CHANNEL hook is a fallback entry in the
-  // channel context menu for Kodi versions without settings hooks.
+  // 30900 = "Select providers..." (strings.po). A SETTING hook is shown by Kodi as an
+  // action button in this addon's settings dialog (Kodi versions that support settings
+  // hooks). For other versions see the "provider_selection" trigger in SetSetting().
   AddMenuHook(kodi::addon::PVRMenuhook(1, 30900, PVR_MENUHOOK_SETTING));
-  AddMenuHook(kodi::addon::PVRMenuhook(2, 30900, PVR_MENUHOOK_CHANNEL));
 
   {
     std::lock_guard<std::mutex> lock(m_configMutex);
@@ -69,6 +68,9 @@ CPVRUltimate::~CPVRUltimate() {
   EnsureInitThreadStopped();
   if (m_initThread.joinable()) {
     m_initThread.join();
+  }
+  if (m_uiThread.joinable()) {
+    m_uiThread.join();
   }
 }
 
@@ -333,6 +335,19 @@ ADDON_STATUS CPVRUltimate::SetSetting(const std::string& settingName,
     m_customHeaders = settingValue.GetString();
     kodi::Log(ADDON_LOG_INFO, "Custom headers changed");
     return ADDON_STATUS_NEED_RESTART;
+  }
+  else if (settingName == "provider_selection") {
+    // Optional trigger for Kodi versions without settings hooks. Kodi hands setting
+    // values to the addon only when the settings dialog is confirmed with OK, so the
+    // selection dialog opens right after that. Never block Kodi's GUI thread here.
+    if (settingValue.GetBoolean() && !m_providerDialogOpen.load()) {
+      if (m_uiThread.joinable()) m_uiThread.join();  // previous run is done (dialog not open)
+      m_uiThread = std::thread([this]() {
+        ShowProviderSelection();
+        kodi::addon::SetSettingBoolean("provider_selection", false);  // behave like a button
+      });
+    }
+    return ADDON_STATUS_OK;
   }
   else if (settingName == "epg_service_url") {
     std::lock_guard<std::mutex> lock(m_configMutex);
@@ -1194,12 +1209,6 @@ ADDONCREATOR(CPVRUltimate)
 
 PVR_ERROR CPVRUltimate::CallSettingsMenuHook(const kodi::addon::PVRMenuhook& menuhook) {
   if (menuhook.GetHookId() == 1) ShowProviderSelection();
-  return PVR_ERROR_NO_ERROR;
-}
-
-PVR_ERROR CPVRUltimate::CallChannelMenuHook(const kodi::addon::PVRMenuhook& menuhook,
-                                            const kodi::addon::PVRChannel& /*item*/) {
-  if (menuhook.GetHookId() == 2) ShowProviderSelection();
   return PVR_ERROR_NO_ERROR;
 }
 

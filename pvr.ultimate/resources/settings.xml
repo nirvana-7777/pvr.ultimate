@@ -57,5 +57,16 @@
                 </setting>
             </group>
         </category>
+
+        <!-- Provider selection: acts like a button. Toggle on + confirm with OK opens the dialog. -->
+        <category id="providers" label="30923" help="">
+            <group id="4" label="30924">
+                <setting id="provider_selection" type="boolean" label="30925" help="30926">
+                    <level>0</level>
+                    <default>false</default>
+                    <control type="toggle"/>
+                </setting>
+            </group>
+        </category>
     </section>
 </settings>
