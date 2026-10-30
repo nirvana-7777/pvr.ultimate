@@ -4,6 +4,7 @@
 #include <kodi/General.h>
 #include <kodi/AddonBase.h>
 #include <kodi/Filesystem.h>
+#include <kodi/gui/General.h>
 #include <sstream>
 #include <ctime>
 #include <algorithm>
@@ -112,6 +113,11 @@ void CPVRUltimate::InitializeAsync() {
       if (!m_providerManager->LoadProviders(httpGet, parseJson)) {
         kodi::Log(ADDON_LOG_ERROR, "Failed to load providers");
       }
+
+      // First start without a stored selection: ask BEFORE warm-up/channel loading, so
+      // deselected providers are never loaded at all.
+      if (m_stopInit.load()) { m_initRunning = false; m_initCv.notify_all(); return; }
+      MaybeRunFirstStartSelection(httpGet, parseJson);
 
       // NEW: right after a backend restart some providers are still loading
       // their channel lists (state "warming"). Kodi's initial PVR import runs
@@ -1207,6 +1213,36 @@ ADDONCREATOR(CPVRUltimate)
 // Provider selection dialog (client-side sub-selection, backend untouched)
 // ============================================================================
 
+namespace {
+// Providers the backend offers (selectable), as dialog rows.
+std::vector<CProviderSelectDialog::Entry> BuildSelectionEntries(const std::vector<UltimateProvider>& providers) {
+  std::vector<CProviderSelectDialog::Entry> entries;
+  for (const auto& p : providers) {
+    if (!p.backendEnabled) continue;
+    CProviderSelectDialog::Entry e;
+    e.name = p.name;
+    e.label = p.label.empty() ? p.name : p.label;
+    e.country = p.country;
+    e.logo = p.logo;
+    e.state = p.channelState;
+    e.enabled = p.enabled;
+    entries.push_back(std::move(e));
+  }
+  return entries;
+}
+
+// Rows shown in the dialog take the user's choice; providers not shown (currently off on
+// the backend) keep their previous local state.
+std::set<std::string> MergeSelection(std::set<std::string> disabled,
+                                     const std::map<std::string, bool>& result) {
+  for (const auto& [name, enabled] : result) {
+    if (enabled) disabled.erase(name);
+    else disabled.insert(name);
+  }
+  return disabled;
+}
+}  // namespace
+
 PVR_ERROR CPVRUltimate::CallSettingsMenuHook(const kodi::addon::PVRMenuhook& menuhook) {
   if (menuhook.GetHookId() == 1) ShowProviderSelection();
   return PVR_ERROR_NO_ERROR;
@@ -1237,18 +1273,7 @@ void CPVRUltimate::ShowProviderSelection() {
   const std::set<std::string> oldDisabled = m_providerManager->GetLocallyDisabled();
 
   // Only what the backend offers is selectable.
-  std::vector<CProviderSelectDialog::Entry> entries;
-  for (const auto& p : providers) {
-    if (!p.backendEnabled) continue;
-    CProviderSelectDialog::Entry e;
-    e.name = p.name;
-    e.label = p.label.empty() ? p.name : p.label;
-    e.country = p.country;
-    e.logo = p.logo;
-    e.state = p.channelState;
-    e.enabled = p.enabled;
-    entries.push_back(std::move(e));
-  }
+  std::vector<CProviderSelectDialog::Entry> entries = BuildSelectionEntries(providers);
   if (entries.empty()) {
     kodi::QueueNotification(QUEUE_INFO, "PVR Ultimate",
                             kodi::addon::GetLocalizedString(30922, "No providers available"));
@@ -1256,15 +1281,9 @@ void CPVRUltimate::ShowProviderSelection() {
   }
 
   CProviderSelectDialog dialog(std::move(entries));
-  if (!dialog.Run()) return;
+  if (dialog.Run() != CProviderSelectDialog::Outcome::Applied) return;
 
-  // Providers shown in the dialog take the user's choice; anything not shown
-  // (currently off on the backend) keeps its previous local state.
-  std::set<std::string> newDisabled = oldDisabled;
-  for (const auto& [name, enabled] : dialog.Result()) {
-    if (enabled) newDisabled.erase(name);
-    else newDisabled.insert(name);
-  }
+  const std::set<std::string> newDisabled = MergeSelection(oldDisabled, dialog.Result());
   if (newDisabled == oldDisabled) {
     kodi::QueueNotification(QUEUE_INFO, "PVR Ultimate", kodi::addon::GetLocalizedString(30918, "No changes"));
     return;
@@ -1323,5 +1342,66 @@ void CPVRUltimate::ReloadAfterProviderChange() {
       m_initRunning = false;
       m_initCv.notify_all();
     });
+  }
+}
+
+// ============================================================================
+// First start: ask which providers to use before loading anything
+// ============================================================================
+
+void CPVRUltimate::WaitForGuiReady(int maxMs) {
+  // Kodi offers addons no "GUI is ready" signal. Heuristic: wait until the splash /
+  // startup animation is gone, then let the UI settle briefly. Bounded, so an odd skin
+  // can never block initialisation for long.
+  constexpr int kWindowInvalid = 9999, kWindowSplash = 12997, kWindowStartupAnim = 12999;
+  for (int waited = 0; waited < maxMs; waited += 500) {
+    const int id = kodi::gui::GetCurrentWindowId();
+    if (id != 0 && id != kWindowInvalid && id != kWindowSplash && id != kWindowStartupAnim) break;
+    if (!SleepInterruptible(500)) return;
+  }
+  SleepInterruptible(1500);
+}
+
+void CPVRUltimate::MaybeRunFirstStartSelection(
+    const std::function<std::string(const std::string&)>& httpGet,
+    const std::function<bool(const std::string&, nlohmann::json&)>& parseJson) {
+  if (m_providerManager->HasLocalSelection()) return;
+
+  std::vector<CProviderSelectDialog::Entry> entries =
+      BuildSelectionEntries(m_providerManager->GetProvidersCopy());
+  if (entries.size() < 2) return;  // nothing to choose between
+
+  if (m_providerDialogOpen.exchange(true)) return;
+  struct Reset { std::atomic<bool>& f; ~Reset() { f = false; } } reset{m_providerDialogOpen};
+
+  WaitForGuiReady(30000);
+  if (m_stopInit.load()) return;
+
+  constexpr int kIdleTimeoutSec = 120;
+  CProviderSelectDialog dialog(std::move(entries));  // every row starts enabled
+  dialog.SetTitle(kodi::addon::GetLocalizedString(30928, "Welcome - choose your providers"));
+  const auto outcome = dialog.Run(kIdleTimeoutSec, [this]() { return m_stopInit.load(); });
+
+  switch (outcome) {
+    case CProviderSelectDialog::Outcome::Applied: {
+      const std::set<std::string> disabled = MergeSelection({}, dialog.Result());
+      kodi::Log(ADDON_LOG_INFO, "First start: %zu provider(s) deselected", disabled.size());
+      m_providerManager->SetLocallyDisabled(disabled);
+      m_providerManager->LoadProviders(httpGet, parseJson);  // re-apply the filter
+      break;
+    }
+    case CProviderSelectDialog::Outcome::Cancelled:
+      // Keep all providers and remember it, so the question is not asked on every start.
+      kodi::Log(ADDON_LOG_INFO, "First start: selection cancelled, using all providers");
+      m_providerManager->SetLocallyDisabled({});
+      kodi::QueueNotification(QUEUE_INFO, "PVR Ultimate",
+                              kodi::addon::GetLocalizedString(30927, "All providers are active. You can change the selection later in the add-on settings."));
+      break;
+    case CProviderSelectDialog::Outcome::TimedOut:
+      // Nobody answered (unattended device): continue with everything, ask again next start.
+      kodi::Log(ADDON_LOG_INFO, "First start: no input within %d s, using all providers (will ask again)", kIdleTimeoutSec);
+      break;
+    case CProviderSelectDialog::Outcome::Aborted:
+      break;
   }
 }

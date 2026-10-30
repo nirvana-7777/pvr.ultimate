@@ -31,6 +31,9 @@ public:
     // that newly appear on the backend are active by default.
     void LoadLocalSelection(const std::string& filePath);
     std::set<std::string> GetLocallyDisabled() const;
+    // True if a valid selection file was read or a selection was stored this session.
+    // False on a fresh install (-> first-start selection dialog).
+    bool HasLocalSelection() const;
     // Stores and persists the selection; returns false if the file could not be written.
     // Takes effect on the next LoadProviders().
     bool SetLocallyDisabled(const std::set<std::string>& disabled);
@@ -46,4 +49,5 @@ private:
     mutable std::shared_mutex m_dataMutex;
     std::set<std::string> m_locallyDisabled;
     std::string m_selectionPath;
+    bool m_hasSelection = false;
 };

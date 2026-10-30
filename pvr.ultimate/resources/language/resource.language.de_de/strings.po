@@ -96,3 +96,11 @@ msgctxt "#30926"
 msgid "Switch on and confirm with OK to open the provider selection. Only affects this client, not the backend."
 msgstr "Einschalten und mit OK bestätigen, um die Providerauswahl zu öffnen. Wirkt nur auf diesen Client, nicht auf das Backend."
 
+msgctxt "#30927"
+msgid "All providers are active. You can change the selection later in the add-on settings."
+msgstr "Alle Provider sind aktiv. Die Auswahl lässt sich später in den Addon-Einstellungen ändern."
+
+msgctxt "#30928"
+msgid "Ultimate PVR - choose your providers"
+msgstr "Ultimate PVR - Provider auswählen"
+

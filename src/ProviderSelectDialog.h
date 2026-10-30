@@ -2,6 +2,9 @@
 
 #include <kodi/gui/Window.h>
 #include <kodi/gui/ListItem.h>
+#include <atomic>
+#include <chrono>
+#include <functional>
 #include <map>
 #include <string>
 #include <vector>
@@ -23,8 +26,16 @@ public:
 
   explicit CProviderSelectDialog(std::vector<Entry> entries);
 
-  // Shows the dialog modally. Returns true only if the user pressed "Apply".
-  bool Run();
+  enum class Outcome { Applied, Cancelled, TimedOut, Aborted };
+
+  void SetTitle(const std::string& title) { m_title = title; }
+
+  // Shows the dialog modally.
+  //  idleTimeoutSec > 0: closes itself after that many seconds WITHOUT any user input
+  //                      (-> TimedOut), for unattended devices.
+  //  shouldAbort:        polled while open; when it returns true the dialog closes
+  //                      (-> Aborted), e.g. on addon shutdown.
+  Outcome Run(int idleTimeoutSec = 0, std::function<bool()> shouldAbort = {});
 
   // provider name -> desired enabled state (all providers, not just changed)
   std::map<std::string, bool> Result() const;
@@ -49,6 +60,11 @@ private:
   void Toggle(int position);
   void UpdateCounter();
 
+  void Touch();
+
+  std::string m_title;
+  std::atomic<long long> m_lastActivityMs{0};
+  std::atomic<int> m_override{0};  // 0 none, 1 timed out, 2 aborted
   std::vector<Entry> m_entries;
   // list position -> index into m_entries (list is shown sorted by label)
   std::vector<size_t> m_order;

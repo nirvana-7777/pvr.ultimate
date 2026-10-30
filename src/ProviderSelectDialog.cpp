@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cctype>
 #include <memory>
+#include <thread>
 
 namespace {
 // String IDs in resources/language/*/strings.po
@@ -30,10 +31,50 @@ CProviderSelectDialog::CProviderSelectDialog(std::vector<Entry> entries)
   });
 }
 
-bool CProviderSelectDialog::Run() {
+void CProviderSelectDialog::Touch() {
+  m_lastActivityMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                         std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+CProviderSelectDialog::Outcome CProviderSelectDialog::Run(int idleTimeoutSec,
+                                                          std::function<bool()> shouldAbort) {
   m_applied = false;
+  m_override = 0;
+  Touch();
+
+  std::atomic<bool> done{false};
+  std::thread watchdog;
+  if (idleTimeoutSec > 0 || shouldAbort) {
+    watchdog = std::thread([&]() {
+      while (!done.load()) {
+        for (int i = 0; i < 5 && !done.load(); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        if (done.load()) break;
+        if (shouldAbort && shouldAbort()) {
+          m_override = 2;
+          Close();
+          break;
+        }
+        if (idleTimeoutSec > 0) {
+          const long long now = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                    std::chrono::steady_clock::now().time_since_epoch()).count();
+          if (now - m_lastActivityMs.load() > static_cast<long long>(idleTimeoutSec) * 1000) {
+            m_override = 1;
+            Close();
+            break;
+          }
+        }
+      }
+    });
+  }
+
   DoModal();
-  return m_applied;
+  done = true;
+  if (watchdog.joinable()) watchdog.join();
+
+  if (m_applied) return Outcome::Applied;  // an explicit "Apply" always wins a race
+  if (m_override == 1) return Outcome::TimedOut;
+  if (m_override == 2) return Outcome::Aborted;
+  return Outcome::Cancelled;
 }
 
 std::map<std::string, bool> CProviderSelectDialog::Result() const {
@@ -43,7 +84,7 @@ std::map<std::string, bool> CProviderSelectDialog::Result() const {
 }
 
 bool CProviderSelectDialog::OnInit() {
-  SetControlLabel(ID_TITLE, kodi::addon::GetLocalizedString(STR_TITLE, "Select providers"));
+  SetControlLabel(ID_TITLE, m_title.empty() ? kodi::addon::GetLocalizedString(STR_TITLE, "Select providers") : m_title);
   FillList();
   UpdateCounter();
   SetFocusId(ID_LIST);
@@ -96,6 +137,7 @@ void CProviderSelectDialog::UpdateCounter() {
 }
 
 bool CProviderSelectDialog::OnClick(int controlId) {
+  Touch();
   switch (controlId) {
     case ID_LIST: Toggle(GetCurrentListPosition()); return true;
     case ID_BTN_ALL: SetAll(true); return true;
@@ -107,6 +149,7 @@ bool CProviderSelectDialog::OnClick(int controlId) {
 }
 
 bool CProviderSelectDialog::OnAction(ADDON_ACTION actionId) {
+  Touch();
   if (actionId == ADDON_ACTION_PREVIOUS_MENU || actionId == ADDON_ACTION_NAV_BACK) {
     m_applied = false;
     Close();

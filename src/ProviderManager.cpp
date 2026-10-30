@@ -106,6 +106,7 @@ void ProviderManager::LoadLocalSelection(const std::string& filePath) {
   std::unique_lock<std::shared_mutex> lock(m_dataMutex);
   m_selectionPath = filePath;
   m_locallyDisabled.clear();
+  m_hasSelection = false;
 
   if (!kodi::vfs::FileExists(filePath)) return;
   kodi::vfs::CFile file;
@@ -119,6 +120,7 @@ void ProviderManager::LoadLocalSelection(const std::string& filePath) {
 
   try {
     const auto doc = nlohmann::json::parse(content);
+    m_hasSelection = doc.is_object();
     if (doc.contains("disabled") && doc["disabled"].is_array()) {
       for (const auto& v : doc["disabled"]) {
         if (v.is_string()) m_locallyDisabled.insert(v.get<std::string>());
@@ -139,6 +141,7 @@ bool ProviderManager::SetLocallyDisabled(const std::set<std::string>& disabled) 
   {
     std::unique_lock<std::shared_mutex> lock(m_dataMutex);
     m_locallyDisabled = disabled;
+    m_hasSelection = true;  // also if persisting fails below: keep the choice for this session
     path = m_selectionPath;
   }
   if (path.empty()) return false;
@@ -169,4 +172,9 @@ bool ProviderManager::SetLocallyDisabled(const std::set<std::string>& disabled) 
     }
   }
   return true;
+}
+
+bool ProviderManager::HasLocalSelection() const {
+  std::shared_lock<std::shared_mutex> lock(m_dataMutex);
+  return m_hasSelection;
 }

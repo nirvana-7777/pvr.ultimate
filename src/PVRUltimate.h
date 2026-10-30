@@ -164,6 +164,12 @@ private:
   // Provider selection (client-side only; the backend is never modified)
   void ShowProviderSelection();
   void ReloadAfterProviderChange();
+  // First start (no selection file yet): ask which providers to use BEFORE any
+  // channel/warm-up work. Cancel = all providers + remember; idle timeout = all
+  // providers, ask again next start.
+  void MaybeRunFirstStartSelection(const std::function<std::string(const std::string&)>& httpGet,
+                                   const std::function<bool(const std::string&, nlohmann::json&)>& parseJson);
+  void WaitForGuiReady(int maxMs);
 
   // Single attempt, no retry/backoff. For optional lookups where a 404 is a valid
   // answer (e.g. /drm of a clear stream) - HttpGet would burn maxRetries*retryDelay on it.
