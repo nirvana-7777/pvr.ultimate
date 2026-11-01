@@ -100,10 +100,16 @@ private:
   std::atomic<bool> m_isaAvailable{true};   // inputstream.adaptive installed AND enabled
   std::atomic<bool> m_providerDialogOpen{false};
 
-  // EPG service settings (database EPG service, optional alternative to backend API)
+  // EPG mode: Off (no EPG) / Backend / External (external service, falls back to backend).
   // m_epgServiceUrl is guarded by m_configMutex, same as m_backendUrl.
-  std::atomic<bool> m_useDatabaseEpg;
+  std::atomic<EPGManager::EpgMode> m_epgMode{EPGManager::EpgMode::Backend};
   std::string m_epgServiceUrl;
+
+  static EPGManager::EpgMode ClampEpgMode(int value) {
+    if (value <= 0) return EPGManager::EpgMode::Off;
+    if (value >= 2) return EPGManager::EpgMode::External;
+    return EPGManager::EpgMode::Backend;
+  }
 
   // Background initialization. Backend discovery + all initial data loads run
   // on m_initThread so a slow/unreachable backend cannot block Kodi's PVR

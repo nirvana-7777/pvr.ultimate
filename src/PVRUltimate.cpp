@@ -20,7 +20,7 @@ CPVRUltimate::CPVRUltimate()
       m_retryDelayMs(2000),
       m_supportsPiggyback(false),
       m_useModernDrm(false),
-      m_useDatabaseEpg(false),
+      m_epgMode(EPGManager::EpgMode::Backend),
       m_epgServiceUrl("http://localhost:8080") {
   kodi::Log(ADDON_LOG_INFO, "Ultimate PVR Client starting...");
 
@@ -53,7 +53,17 @@ CPVRUltimate::CPVRUltimate()
   }
   m_maxRetries = kodi::addon::GetSettingInt("retry_attempts", 10);
   m_retryDelayMs = kodi::addon::GetSettingInt("retry_delay", 2000);
-  m_useDatabaseEpg = kodi::addon::GetSettingBoolean("epg_enabled", false);
+
+  // EPG mode. One-time migration from the old boolean "epg_enabled" (hidden, kept in
+  // settings.xml so its value is still readable): true -> External (2), then reset the
+  // legacy flag so it never overrides the user's later choice. false -> keep epg_mode
+  // as is (default Backend, same behaviour the old "false" had).
+  if (kodi::addon::GetSettingBoolean("epg_enabled", false)) {
+    kodi::addon::SetSettingInt("epg_mode", static_cast<int>(EPGManager::EpgMode::External));
+    kodi::addon::SetSettingBoolean("epg_enabled", false);
+    kodi::Log(ADDON_LOG_INFO, "Migrated legacy epg_enabled=true to epg_mode=External");
+  }
+  m_epgMode = ClampEpgMode(kodi::addon::GetSettingInt("epg_mode", 1));
 
   // Backend discovery and all initial data loading happen on a background
   // thread (see InitializeAsync) rather than here, so a slow or unreachable
@@ -325,9 +335,13 @@ ADDON_STATUS CPVRUltimate::SetSetting(const std::string& settingName,
     kodi::Log(ADDON_LOG_INFO, "Retry delay changed to: %dms", m_retryDelayMs.load());
     return ADDON_STATUS_OK;
   }
+  else if (settingName == "epg_mode") {
+    m_epgMode = ClampEpgMode(settingValue.GetInt());
+    kodi::Log(ADDON_LOG_INFO, "EPG mode changed to: %d", static_cast<int>(m_epgMode.load()));
+    return ADDON_STATUS_OK;
+  }
   else if (settingName == "epg_enabled") {
-    m_useDatabaseEpg = settingValue.GetBoolean();
-    kodi::Log(ADDON_LOG_INFO, "Database EPG service enabled: %s", m_useDatabaseEpg.load() ? "true" : "false");
+    // Legacy hidden setting, only used for the one-time migration in the constructor.
     return ADDON_STATUS_OK;
   }
   else if (settingName == "api_key") {
@@ -905,6 +919,8 @@ PVR_ERROR CPVRUltimate::GetChannelGroupMembers(
 PVR_ERROR CPVRUltimate::GetEPGForChannel(int channelUid, time_t start, time_t end,
                                          kodi::addon::PVREPGTagsResultSet& results) {
   if (!IsReady()) return PVR_ERROR_NO_ERROR;
+  const EPGManager::EpgMode epgMode = m_epgMode.load();
+  if (epgMode == EPGManager::EpgMode::Off) return PVR_ERROR_NO_ERROR;
 
   auto httpGet = [this](const std::string& endpoint) -> std::string {
     return this->HttpGet(this->BuildApiUrl(endpoint));
@@ -926,20 +942,30 @@ PVR_ERROR CPVRUltimate::GetEPGForChannel(int channelUid, time_t start, time_t en
       baseUrl = m_epgServiceUrl;
     }
     if (!baseUrl.empty() && baseUrl.back() == '/') baseUrl.pop_back();
-    return this->HttpGet(baseUrl + endpoint);
+    // Single attempt: if the external service is down we want the backend fallback
+    // right away, not maxRetries*retryDelay of backoff for every channel.
+    return this->HttpGetNoRetry(baseUrl + endpoint);
   };
 
-  m_epgManager->GetEPGForChannel(channelUid, start, end, httpGet, parseJson, getChannelByUid,
-                                 results, httpGetAbsolute, m_useDatabaseEpg.load());
+  m_epgManager->GetEPGForChannel(channelUid, start, end, epgMode, httpGet, parseJson,
+                                 getChannelByUid, results, httpGetAbsolute);
   return PVR_ERROR_NO_ERROR;
 }
 
 PVR_ERROR CPVRUltimate::IsEPGTagRecordable(const kodi::addon::PVREPGTag& tag, bool& bIsRecordable) {
+  if (m_epgMode.load() == EPGManager::EpgMode::Off) {
+    bIsRecordable = false;
+    return PVR_ERROR_NO_ERROR;
+  }
   m_epgManager->IsEPGTagRecordable(tag, bIsRecordable);
   return PVR_ERROR_NO_ERROR;
 }
 
 PVR_ERROR CPVRUltimate::IsEPGTagPlayable(const kodi::addon::PVREPGTag& tag, bool& bIsPlayable) {
+  if (m_epgMode.load() == EPGManager::EpgMode::Off) {
+    bIsPlayable = false;
+    return PVR_ERROR_NO_ERROR;
+  }
   auto getChannelInfo = [this](int uid, std::string& provider, std::string& channelId, int& catchupHours) -> bool {
     return m_channelManager->GetChannelInfo(uid, provider, channelId, catchupHours);
   };
@@ -951,6 +977,8 @@ PVR_ERROR CPVRUltimate::IsEPGTagPlayable(const kodi::addon::PVREPGTag& tag, bool
 PVR_ERROR CPVRUltimate::GetEPGTagStreamProperties(
     const kodi::addon::PVREPGTag& tag,
     std::vector<kodi::addon::PVRStreamProperty>& properties) {
+
+  if (m_epgMode.load() == EPGManager::EpgMode::Off) return PVR_ERROR_NOT_IMPLEMENTED;
 
   if (!IsReady()) {
     kodi::Log(ADDON_LOG_WARNING, "GetEPGTagStreamProperties called before ready");

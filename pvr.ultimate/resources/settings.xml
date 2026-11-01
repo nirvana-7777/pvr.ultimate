@@ -41,19 +41,38 @@
             </group>
         </category>
 
-        <!-- NEW: EPG Service Settings -->
+        <!-- EPG: three modes. Off = no EPG at all (no fetches, not recordable,
+             not playable/catchup from EPG). Backend = the provider API (default,
+             same behaviour as the old "epg_enabled=false"). External = a separate
+             EPG service, with fallback to the backend. -->
         <category id="epg" label="30064" help="">
             <group id="3" label="30065">
-                <setting id="epg_enabled" type="boolean" label="30060" help="30061">
+                <setting id="epg_mode" type="integer" label="30060" help="30061">
                     <level>0</level>
-                    <default>false</default>
-                    <control type="toggle"/>
+                    <default>1</default>
+                    <constraints>
+                        <options>
+                            <option label="30066">0</option>
+                            <option label="30067">1</option>
+                            <option label="30068">2</option>
+                        </options>
+                    </constraints>
+                    <control type="spinner" format="string"/>
                 </setting>
                 <setting id="epg_service_url" type="string" label="30062" help="30063">
                     <level>0</level>
                     <default>http://localhost:8080</default>
-                    <enable>eq(epg_enabled,true)</enable>
+                    <enable>eq(epg_mode,2)</enable>
                     <control type="edit" format="string"/>
+                </setting>
+                <!-- Legacy, hidden. Kept only so the old value stays readable for the
+                     one-time migration epg_enabled=true -> epg_mode=2. Reset to false
+                     by the addon after migrating. Safe to remove in a later release. -->
+                <setting id="epg_enabled" type="boolean" label="30060" help="">
+                    <level>0</level>
+                    <default>false</default>
+                    <visible>false</visible>
+                    <control type="toggle"/>
                 </setting>
             </group>
         </category>

@@ -11,23 +11,27 @@
 
 class EPGManager {
 public:
+    // EPG source selection (three modes).
+    //   Off      - no EPG at all: GetEPGForChannel returns false without any network
+    //              call; the caller also disables EPG-derived recordable/playable/catchup.
+    //   Backend  - provider API only.
+    //   External - external EPG service first, falling back to the backend on an
+    //              empty response or parse failure.
+    enum class EpgMode { Off = 0, Backend = 1, External = 2 };
+
     EPGManager() = default;
 
+    // httpGetAbsolute (used only in External mode) receives a path that already starts
+    // with "/" and includes the versioning prefix; it prepends scheme+host only. It should
+    // be a single-attempt request (no retry/backoff) so an unreachable service falls back
+    // to the backend quickly instead of stalling every channel.
     static bool GetEPGForChannel(int channelUid, time_t start, time_t end,
-                                 const std::function<std::string(const std::string&)>& httpGet,
-                                 const std::function<bool(const std::string&, nlohmann::json&)>& parseJson,
-                                 const std::function<bool(int, UltimateChannel&)>& getChannelByUid,
-                                 kodi::addon::PVREPGTagsResultSet& results);
-
-    // Extended overload: optionally try a database EPG service first via httpGetAbsolute,
-    // falling back to the backend API (httpGet) on empty response or parse failure.
-    static bool GetEPGForChannel(int channelUid, time_t start, time_t end,
+                                 EpgMode mode,
                                  const std::function<std::string(const std::string&)>& httpGet,
                                  const std::function<bool(const std::string&, nlohmann::json&)>& parseJson,
                                  const std::function<bool(int, UltimateChannel&)>& getChannelByUid,
                                  kodi::addon::PVREPGTagsResultSet& results,
-                                 const std::function<std::string(const std::string&)>& httpGetAbsolute,
-                                 bool useDatabaseEpg);
+                                 const std::function<std::string(const std::string&)>& httpGetAbsolute);
 
     static bool IsEPGTagRecordable(const kodi::addon::PVREPGTag& tag, bool& isRecordable);
     static bool IsEPGTagPlayable(const kodi::addon::PVREPGTag& tag, bool& isPlayable,

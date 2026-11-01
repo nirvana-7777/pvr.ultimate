@@ -1,8 +1,110 @@
-# Provider selection dialog strings (IDs 30900-30920).
+# Kodi Media Center language file
+# Addon Name: PVR Ultimate
+# Addon id: pvr.ultimate
+# Addon Provider: Your Name
+
 msgid ""
 msgstr ""
+"Project-Id-Version: Kodi Addons\n"
+"Report-Msgid-Bugs-To: translations@kodi.tv\n"
+"POT-Creation-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"Last-Translator: Kodi Translation Team\n"
+"Language-Team: German (http://www.transifex.com/projects/p/kodi-main/language/de/)\n"
+"MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
 "Language: de_DE\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+# Settings categories
+msgctxt "#30010"
+msgid "Backend"
+msgstr "Backend"
+
+# Settings groups
+msgctxt "#30011"
+msgid "Connection"
+msgstr "Verbindung"
+
+msgctxt "#30012"
+msgid "Advanced"
+msgstr "Erweitert"
+
+# Backend URL setting
+msgctxt "#30020"
+msgid "Backend Server Address"
+msgstr "Backend-Serveradresse"
+
+msgctxt "#30021"
+msgid "IP address or hostname of the Ultimate PVR backend server"
+msgstr "IP-Adresse oder Hostname des Ultimate PVR Backend-Servers"
+
+# Backend Port setting
+msgctxt "#30030"
+msgid "Backend Server Port"
+msgstr "Backend-Serverport"
+
+msgctxt "#30031"
+msgid "Port number of the Ultimate PVR backend server (1-65535)"
+msgstr "Portnummer des Ultimate PVR Backend-Servers (1-65535)"
+
+# Retry Attempts setting
+msgctxt "#30040"
+msgid "Connection Retry Attempts"
+msgstr "Verbindungswiederholungsversuche"
+
+msgctxt "#30041"
+msgid "Number of times to retry connecting to the backend before giving up (1-30)"
+msgstr "Anzahl der Verbindungsversuche zum Backend, bevor aufgegeben wird (1-30)"
+
+# Retry Delay setting
+msgctxt "#30050"
+msgid "Retry Delay (milliseconds)"
+msgstr "Wiederholungsverzögerung (Millisekunden)"
+
+msgctxt "#30051"
+msgid "Delay in milliseconds between connection retry attempts (100-10000)"
+msgstr "Verzögerung in Millisekunden zwischen Verbindungsversuchen (100-10000)"
+
+# EPG Settings
+msgctxt "#30060"
+msgid "EPG mode"
+msgstr "EPG-Modus"
+
+msgctxt "#30061"
+msgid "Controls where EPG data comes from. Off disables EPG entirely (no EPG fetches, no EPG-based recording or catchup). From backend uses the provider API. From external EPG service tries the configured EPG service first and falls back to the backend on failure. Note: Kodi keeps EPG data it already has until it expires or is cleared."
+msgstr "Legt fest, woher die EPG-Daten kommen. Aus deaktiviert EPG vollständig (keine EPG-Abrufe, keine EPG-basierten Aufnahmen oder Catchup). Vom Backend verwendet die Provider-API. Von externem EPG-Dienst versucht zuerst den konfigurierten EPG-Dienst und fällt bei einem Fehler auf das Backend zurück. Hinweis: Kodi behält bereits vorhandene EPG-Daten, bis sie ablaufen oder gelöscht werden."
+
+msgctxt "#30062"
+msgid "EPG Service URL"
+msgstr "EPG-Dienst-URL"
+
+msgctxt "#30063"
+msgid "URL of the database EPG service (e.g., http://localhost:8080)"
+msgstr "URL des Datenbank-EPG-Dienstes (z. B. http://localhost:8080)"
+
+msgctxt "#30064"
+msgid "EPG Service"
+msgstr "EPG-Dienst"
+
+msgctxt "#30065"
+msgid "EPG Settings"
+msgstr "EPG-Einstellungen"
+
+msgctxt "#30066"
+msgid "Off (no EPG)"
+msgstr "Aus (kein EPG)"
+
+msgctxt "#30067"
+msgid "From backend"
+msgstr "Vom Backend"
+
+msgctxt "#30068"
+msgid "From external EPG service (falls back to backend)"
+msgstr "Von externem EPG-Dienst (Fallback auf Backend)"
+
+# Provider selection dialog
 
 msgctxt "#30900"
 msgid "Select providers..."
@@ -103,4 +205,3 @@ msgstr "Alle Provider sind aktiv. Die Auswahl lässt sich später in den Addon-E
 msgctxt "#30928"
 msgid "Ultimate PVR - choose your providers"
 msgstr "Ultimate PVR - Provider auswählen"
-

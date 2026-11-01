@@ -69,12 +69,12 @@ msgstr ""
 
 # EPG Settings
 msgctxt "#30060"
-msgid "Use Database EPG Service"
-msgstr "Use Database EPG Service"
+msgid "EPG mode"
+msgstr ""
 
 msgctxt "#30061"
-msgid "Enable to use database EPG service instead of backend API"
-msgstr "Enable to use database EPG service instead of backend API"
+msgid "Controls where EPG data comes from. Off disables EPG entirely (no EPG fetches, no EPG-based recording or catchup). From backend uses the provider API. From external EPG service tries the configured EPG service first and falls back to the backend on failure. Note: Kodi keeps EPG data it already has until it expires or is cleared."
+msgstr ""
 
 msgctxt "#30062"
 msgid "EPG Service URL"
@@ -90,6 +90,18 @@ msgstr ""
 
 msgctxt "#30065"
 msgid "EPG Settings"
+msgstr ""
+
+msgctxt "#30066"
+msgid "Off (no EPG)"
+msgstr ""
+
+msgctxt "#30067"
+msgid "From backend"
+msgstr ""
+
+msgctxt "#30068"
+msgid "From external EPG service (falls back to backend)"
 msgstr ""
 
 # Provider selection dialog

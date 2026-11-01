@@ -171,30 +171,22 @@ bool EPGManager::ParseEPGResponse(const std::string& response,
   return true;
 }
 
-// Original signature - preserved for any other call sites, delegates to extended version.
-bool EPGManager::GetEPGForChannel(int channelUid, time_t start, time_t end,
-                                  const std::function<std::string(const std::string&)>& httpGet,
-                                  const std::function<bool(const std::string&, nlohmann::json&)>& parseJson,
-                                  const std::function<bool(int, UltimateChannel&)>& getChannelByUid,
-                                  kodi::addon::PVREPGTagsResultSet& results) {
-  return GetEPGForChannel(channelUid, start, end, httpGet, parseJson, getChannelByUid,
-                          results, nullptr, false);
-}
-
-// Extended signature with optional database-EPG-service support.
-//
 // Contract for httpGetAbsolute: it receives a path that already starts with "/" and already
 // includes any versioning prefix (e.g. "/api/v1/providers/..."), and is expected to prepend
-// only scheme+host (m_epgServiceUrl) before making the request. It must NOT itself try to
-// detect/insert a version prefix - that logic belongs here, in one place, not split across
-// two layers (that split is what caused the double "/api/v1/api/v1/..." bug in an earlier draft).
+// only scheme+host (the external EPG service URL) before making the request. It must NOT
+// itself try to detect/insert a version prefix - that logic belongs here, in one place, not
+// split across two layers (that split is what caused the double "/api/v1/api/v1/..." bug in
+// an earlier draft).
 bool EPGManager::GetEPGForChannel(int channelUid, time_t start, time_t end,
+                                  EpgMode mode,
                                   const std::function<std::string(const std::string&)>& httpGet,
                                   const std::function<bool(const std::string&, nlohmann::json&)>& parseJson,
                                   const std::function<bool(int, UltimateChannel&)>& getChannelByUid,
                                   kodi::addon::PVREPGTagsResultSet& results,
-                                  const std::function<std::string(const std::string&)>& httpGetAbsolute,
-                                  bool useDatabaseEpg) {
+                                  const std::function<std::string(const std::string&)>& httpGetAbsolute) {
+  // Off: no EPG at all. No network calls, nothing added to results.
+  if (mode == EpgMode::Off) return false;
+
   std::string provider, channelId, country;
   UltimateChannel channel;
 
@@ -203,27 +195,29 @@ bool EPGManager::GetEPGForChannel(int channelUid, time_t start, time_t end,
   channelId = channel.channelId;
   country = channel.country;
 
-  if (useDatabaseEpg && httpGetAbsolute) {
-    std::ostringstream dbUrl;
-    dbUrl << "/api/v1/providers/" << Utils::UrlPathEncode(provider) << "/channels/"
-          << Utils::UrlPathEncode(channelId) << "/epg"
-          << "?start_time=" << start << "&end_time=" << end;
-    if (!country.empty()) dbUrl << "&country=" << Utils::UrlEncode(country);
+  // External: try the external EPG service first (only when a fetcher was supplied).
+  if (mode == EpgMode::External && httpGetAbsolute) {
+    std::ostringstream extUrl;
+    extUrl << "/api/v1/providers/" << Utils::UrlPathEncode(provider) << "/channels/"
+           << Utils::UrlPathEncode(channelId) << "/epg"
+           << "?start_time=" << start << "&end_time=" << end;
+    if (!country.empty()) extUrl << "&country=" << Utils::UrlEncode(country);
 
     // Single call - httpGetAbsolute performs the request and returns the response body directly.
-    std::string dbResponse = httpGetAbsolute(dbUrl.str());
+    std::string extResponse = httpGetAbsolute(extUrl.str());
 
-    if (!dbResponse.empty()) {
-      if (ParseEPGResponse(dbResponse, channelUid, parseJson, results)) {
+    if (!extResponse.empty()) {
+      if (ParseEPGResponse(extResponse, channelUid, parseJson, results)) {
         return true;
       }
-      kodi::Log(ADDON_LOG_WARNING, "Database EPG parse failed for channel %d, falling back to backend", channelUid);
+      kodi::Log(ADDON_LOG_WARNING, "External EPG parse failed for channel %d, falling back to backend", channelUid);
     } else {
-      kodi::Log(ADDON_LOG_WARNING, "Database EPG empty response for channel %d, falling back to backend", channelUid);
+      kodi::Log(ADDON_LOG_WARNING, "External EPG empty response for channel %d, falling back to backend", channelUid);
     }
     // Falls through to the backend API path below.
   }
 
+  // Backend: also the only path when mode == EpgMode::Backend.
   std::ostringstream url;
   url << "/api/providers/" << Utils::UrlPathEncode(provider) << "/channels/"
       << Utils::UrlPathEncode(channelId) << "/epg"
