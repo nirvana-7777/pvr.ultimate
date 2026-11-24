@@ -8,6 +8,7 @@
 #include <vector>
 
 std::map<unsigned int, std::string> EPGManager::s_epgEventIdCache;
+std::map<std::string, unsigned int> EPGManager::s_broadcastIdByEventId;
 std::shared_mutex EPGManager::s_epgEventIdCacheMutex;
 
 // Shared parsing logic - single source of truth for EPG JSON -> PVREPGTag mapping.
@@ -25,7 +26,15 @@ bool EPGManager::ParseEPGResponse(const std::string& response,
     uint64_t start;
     uint64_t end;
     std::string title;
+    unsigned int broadcastId;
+    // Provider listing guid (epg_event_id). The id timers are keyed on - see the
+    // caching block after de-duplication.
+    std::string eventId;
   };
+
+  // Starts closer than this count as the same slot (providers differ by up to a
+  // minute). Same tolerance as ultimate-ui's mergeDuplicateSlots.
+  constexpr uint64_t kSlotToleranceSec = 120;
   std::vector<ParsedTag> parsedTags;
 
   for (const auto& epgItem : document["epg"]) {
@@ -46,23 +55,13 @@ bool EPGManager::ParseEPGResponse(const std::string& response,
     tag.SetStartTime(static_cast<time_t>(eStart));
     tag.SetEndTime(static_cast<time_t>(eEnd));
 
-    // Cache the provider-native listing guid (if the backend sent one) against
-    // this broadcast's id, so TimerManager::AddTimer can resolve it later from
-    // just the PVRTimer's iEpgUid - Kodi's timer API has no field to carry an
-    // arbitrary string through from the EPG tag, so this cache is the bridge.
-    if (epgItem.contains("epg_event_id") && epgItem["epg_event_id"].is_string()) {
-      std::string epgEventId = epgItem["epg_event_id"].get<std::string>();
-      if (!epgEventId.empty()) {
-        std::unique_lock<std::shared_mutex> lock(s_epgEventIdCacheMutex);
-        if (s_epgEventIdCache.size() >= kMaxCacheEntries) {
-          kodi::Log(ADDON_LOG_DEBUG,
-                    "EPGManager: epg_event_id cache hit cap (%zu entries), clearing",
-                    s_epgEventIdCache.size());
-          s_epgEventIdCache.clear();
-        }
-        s_epgEventIdCache[broadcastId] = std::move(epgEventId);
-      }
-    }
+    // Provider-native listing guid (if the backend sent one). It is cached against
+    // the broadcast id only after de-duplication below: the same slot can arrive as
+    // two rows (a detailed one without and a thin provider-event row with
+    // epg_event_id), and the id must end up on the row that survives.
+    std::string epgEventId;
+    if (epgItem.contains("epg_event_id") && epgItem["epg_event_id"].is_string())
+      epgEventId = epgItem["epg_event_id"].get<std::string>();
 
     std::string title;
     if (epgItem.contains("title") && epgItem["title"].is_string())
@@ -113,7 +112,8 @@ bool EPGManager::ParseEPGResponse(const std::string& response,
         tag.SetEpisodeName(epName);
     }
 
-    parsedTags.push_back({std::move(tag), eStart, eEnd, std::move(title)});
+    parsedTags.push_back({std::move(tag), eStart, eEnd, std::move(title), broadcastId,
+                          std::move(epgEventId)});
   }
 
   // De-duplication.
@@ -147,11 +147,21 @@ bool EPGManager::ParseEPGResponse(const std::string& response,
   uint64_t lastAcceptedEnd = 0;
   std::string lastAcceptedTitle;
   bool haveAccepted = false;
+  size_t lastAcceptedIdx = 0;
+  std::vector<size_t> acceptedIdx;
 
   for (size_t idx : order) {
     ParsedTag& pt = parsedTags[idx];
     if (haveAccepted && !pt.title.empty() && pt.title == lastAcceptedTitle &&
         pt.start < lastAcceptedEnd) {
+      // The dropped row may be the one carrying epg_event_id. Hand the id to the
+      // surviving row when both describe the same slot, otherwise a timer set on
+      // the surviving tag would have no event id to be keyed on.
+      ParsedTag& kept = parsedTags[lastAcceptedIdx];
+      const uint64_t startDiff = pt.start > kept.start ? pt.start - kept.start : kept.start - pt.start;
+      if (kept.eventId.empty() && !pt.eventId.empty() && startDiff <= kSlotToleranceSec) {
+        kept.eventId = pt.eventId;
+      }
       kodi::Log(ADDON_LOG_WARNING,
                 "EPG dedup: dropping overlapping duplicate '%s' start=%llu end=%llu on "
                 "channel %d (kept earlier version ending at %llu) - two schedule "
@@ -165,7 +175,31 @@ bool EPGManager::ParseEPGResponse(const std::string& response,
     results.Add(pt.tag);
     lastAcceptedEnd = pt.end;
     lastAcceptedTitle = pt.title;
+    lastAcceptedIdx = idx;
+    acceptedIdx.push_back(idx);
     haveAccepted = true;
+  }
+
+  // Cache the provider-native listing guid (if the backend sent one) against the
+  // broadcast id of every tag handed to Kodi, so TimerManager can resolve it later
+  // from just the PVRTimer's iEpgUid - Kodi's timer API has no field to carry an
+  // arbitrary string through from the EPG tag, so this cache is the bridge. The
+  // reverse map lets timers loaded from the backend find their EPG tag again.
+  {
+    std::unique_lock<std::shared_mutex> lock(s_epgEventIdCacheMutex);
+    for (size_t idx : acceptedIdx) {
+      const ParsedTag& pt = parsedTags[idx];
+      if (pt.eventId.empty()) continue;
+      if (s_epgEventIdCache.size() >= kMaxCacheEntries) {
+        kodi::Log(ADDON_LOG_DEBUG,
+                  "EPGManager: epg_event_id cache hit cap (%zu entries), clearing",
+                  s_epgEventIdCache.size());
+        s_epgEventIdCache.clear();
+        s_broadcastIdByEventId.clear();
+      }
+      s_epgEventIdCache[pt.broadcastId] = pt.eventId;
+      s_broadcastIdByEventId[pt.eventId] = pt.broadcastId;
+    }
   }
 
   return true;
@@ -235,6 +269,13 @@ std::string EPGManager::GetEpgEventId(unsigned int broadcastId) {
   auto it = s_epgEventIdCache.find(broadcastId);
   if (it == s_epgEventIdCache.end()) return "";
   return it->second;
+}
+
+unsigned int EPGManager::GetBroadcastIdForEventId(const std::string& eventId) {
+  if (eventId.empty()) return 0;
+  std::shared_lock<std::shared_mutex> lock(s_epgEventIdCacheMutex);
+  auto it = s_broadcastIdByEventId.find(eventId);
+  return it == s_broadcastIdByEventId.end() ? 0 : it->second;
 }
 
 bool EPGManager::IsEPGTagRecordable(const kodi::addon::PVREPGTag& tag, bool& isRecordable) {

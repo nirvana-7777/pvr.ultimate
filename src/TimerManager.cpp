@@ -1,6 +1,74 @@
 #include "TimerManager.h"
 #include "Utils.h"
 #include "EPGManager.h"
+#include <cctype>
+
+namespace {
+
+// The backend serialises PascalCase (Timer.to_dict / TimerType.to_dict, e.g. "ClientIndex",
+// "EpgEventId"); snake_case is accepted as well, like ultimate-ui's pick(). Null counts as absent.
+const nlohmann::json* Pick(const nlohmann::json& obj, const char* pascal, const char* snake) {
+  for (const char* key : {pascal, snake}) {
+    auto it = obj.find(key);
+    if (it != obj.end() && !it->is_null()) return &*it;
+  }
+  return nullptr;
+}
+
+bool PickInt(const nlohmann::json& obj, const char* pascal, const char* snake, int& out) {
+  const nlohmann::json* v = Pick(obj, pascal, snake);
+  if (!v || !v->is_number_integer()) return false;
+  out = v->get<int>();
+  return true;
+}
+
+bool PickBool(const nlohmann::json& obj, const char* pascal, const char* snake, bool& out) {
+  const nlohmann::json* v = Pick(obj, pascal, snake);
+  if (!v || !v->is_boolean()) return false;
+  out = v->get<bool>();
+  return true;
+}
+
+bool PickString(const nlohmann::json& obj, const char* pascal, const char* snake, std::string& out) {
+  const nlohmann::json* v = Pick(obj, pascal, snake);
+  if (!v || !v->is_string()) return false;
+  out = v->get<std::string>();
+  return true;
+}
+
+bool PickTime(const nlohmann::json& obj, const char* pascal, const char* snake, time_t& out) {
+  std::string iso;
+  if (!PickString(obj, pascal, snake, iso)) return false;
+  out = Utils::ParseISO8601(iso);
+  return true;
+}
+
+// Backend TimerState (a string enum) -> the numbering MapTimerStateToKodi() expects
+// (declaration order of the enum). Plain integers pass through unchanged.
+int ParseTimerState(const nlohmann::json& obj) {
+  const nlohmann::json* v = Pick(obj, "State", "state");
+  if (!v) return 0;
+  if (v->is_number_integer()) return v->get<int>();
+  if (!v->is_string()) return 0;
+  std::string name = v->get<std::string>();
+  for (char& c : name) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+  static const char* const kStates[] = {"NEW", "SCHEDULED", "RECORDING", "COMPLETED",
+                                        "ABORTED", "CANCELLED", "CONFLICT", "ERROR"};
+  for (int i = 0; i < 8; ++i) {
+    if (name == kStates[i]) return i;
+  }
+  return 0;
+}
+
+// Python's datetime.fromisoformat (< 3.11) cannot read a trailing "Z": send "+00:00" like
+// ultimate-ui's toBackendIso.
+std::string ToBackendIso(time_t t) {
+  std::string iso = Utils::ToISO8601(t);
+  if (!iso.empty() && iso.back() == 'Z') iso.replace(iso.size() - 1, 1, "+00:00");
+  return iso;
+}
+
+}  // namespace
 
 bool TimerManager::LoadTimerTypes(const std::vector<UltimateProvider>& providers,
                                   const std::function<std::string(const std::string&)>& httpGet,
@@ -40,10 +108,12 @@ void TimerManager::LoadTimerTypesForProvider(const std::string& provider,
 
   for (const auto& ttJson : document["timer_types"]) {
     UltimateTimerType timerType;
-    if (ttJson.contains("id") && ttJson["id"].is_number_integer()) timerType.id = ttJson["id"].get<int>();
-    else continue;
-    timerType.description = (ttJson.contains("description") && ttJson["description"].is_string()) ? ttJson["description"].get<std::string>() : "Timer";
-    timerType.priority = (ttJson.contains("priority") && ttJson["priority"].is_number_integer()) ? ttJson["priority"].get<int>() : 50;
+    if (!PickInt(ttJson, "TypeId", "type_id", timerType.id) &&
+        !PickInt(ttJson, "Id", "id", timerType.id))
+      continue;
+    timerType.description = "Timer";
+    PickString(ttJson, "Description", "description", timerType.description);
+    PickInt(ttJson, "PriorityDefault", "priority_default", timerType.priority);
     outTimerTypes.push_back(timerType);
   }
 }
@@ -80,76 +150,46 @@ void TimerManager::LoadTimersForProvider(const std::string& provider,
     UltimateTimer timer;
     timer.provider = provider;
 
-    if (timerJson.contains("client_index") && timerJson["client_index"].is_number_integer())
-      timer.clientIndex = timerJson["client_index"].get<int>();
-    else continue;
+    if (!PickInt(timerJson, "ClientIndex", "client_index", timer.clientIndex)) continue;
 
-    if (timerJson.contains("timer_type_id") && timerJson["timer_type_id"].is_number_integer())
-      timer.timerTypeId = timerJson["timer_type_id"].get<int>();
-    if (timerJson.contains("title") && timerJson["title"].is_string())
-      timer.title = timerJson["title"].get<std::string>();
-    if (timerJson.contains("parent_client_index") && timerJson["parent_client_index"].is_number_integer())
-      timer.parentClientIndex = timerJson["parent_client_index"].get<int>();
+    PickInt(timerJson, "TimerTypeId", "timer_type_id", timer.timerTypeId);
+    PickString(timerJson, "Title", "title", timer.title);
+    PickInt(timerJson, "ParentClientIndex", "parent_client_index", timer.parentClientIndex);
 
-    if (timerJson.contains("client_channel_uid") && timerJson["client_channel_uid"].is_number_integer())
-      timer.clientChannelUid = timerJson["client_channel_uid"].get<int>();
-    if (timerJson.contains("channel_name") && timerJson["channel_name"].is_string())
-      timer.channelName = timerJson["channel_name"].get<std::string>();
+    PickInt(timerJson, "ClientChannelUid", "client_channel_uid", timer.clientChannelUid);
+    PickString(timerJson, "ChannelName", "channel_name", timer.channelName);
 
-    if (timerJson.contains("start_time") && timerJson["start_time"].is_string())
-      timer.startTime = Utils::ParseISO8601(timerJson["start_time"].get<std::string>());
-    if (timerJson.contains("end_time") && timerJson["end_time"].is_string())
-      timer.endTime = Utils::ParseISO8601(timerJson["end_time"].get<std::string>());
-    if (timerJson.contains("start_any_time") && timerJson["start_any_time"].is_boolean())
-      timer.startAnyTime = timerJson["start_any_time"].get<bool>();
-    if (timerJson.contains("end_any_time") && timerJson["end_any_time"].is_boolean())
-      timer.endAnyTime = timerJson["end_any_time"].get<bool>();
+    PickTime(timerJson, "StartTime", "start_time", timer.startTime);
+    PickTime(timerJson, "EndTime", "end_time", timer.endTime);
+    PickBool(timerJson, "StartAnyTime", "start_any_time", timer.startAnyTime);
+    PickBool(timerJson, "EndAnyTime", "end_any_time", timer.endAnyTime);
+    PickTime(timerJson, "FirstDay", "first_day", timer.firstDay);
 
-    if (timerJson.contains("margin_start") && timerJson["margin_start"].is_number_integer())
-      timer.marginStart = timerJson["margin_start"].get<int>();
-    if (timerJson.contains("margin_end") && timerJson["margin_end"].is_number_integer())
-      timer.marginEnd = timerJson["margin_end"].get<int>();
+    PickInt(timerJson, "MarginStart", "margin_start", timer.marginStart);
+    PickInt(timerJson, "MarginEnd", "margin_end", timer.marginEnd);
 
-    if (timerJson.contains("state") && timerJson["state"].is_number_integer())
-      timer.state = timerJson["state"].get<int>();
+    timer.state = ParseTimerState(timerJson);
 
-    if (timerJson.contains("weekdays") && timerJson["weekdays"].is_number_integer())
-      timer.weekdays = timerJson["weekdays"].get<int>();
-    if (timerJson.contains("first_day") && timerJson["first_day"].is_string())
-      timer.firstDay = Utils::ParseISO8601(timerJson["first_day"].get<std::string>());
+    PickInt(timerJson, "Weekdays", "weekdays", timer.weekdays);
+    PickInt(timerJson, "PreventDuplicateEpisodes", "prevent_duplicate_episodes",
+            timer.preventDuplicateEpisodes);
+    PickString(timerJson, "SeriesLink", "series_link", timer.seriesLink);
 
-    if (timerJson.contains("prevent_duplicate_episodes") && timerJson["prevent_duplicate_episodes"].is_number_integer())
-      timer.preventDuplicateEpisodes = timerJson["prevent_duplicate_episodes"].get<int>();
-    if (timerJson.contains("series_link") && timerJson["series_link"].is_string())
-      timer.seriesLink = timerJson["series_link"].get<std::string>();
+    PickString(timerJson, "Directory", "directory", timer.directory);
+    PickInt(timerJson, "Priority", "priority", timer.priority);
+    PickInt(timerJson, "Lifetime", "lifetime", timer.lifetime);
+    PickInt(timerJson, "MaxRecordings", "max_recordings", timer.maxRecordings);
+    PickInt(timerJson, "RecordingGroup", "recording_group", timer.recordingGroup);
 
-    if (timerJson.contains("directory") && timerJson["directory"].is_string())
-      timer.directory = timerJson["directory"].get<std::string>();
-    if (timerJson.contains("priority") && timerJson["priority"].is_number_integer())
-      timer.priority = timerJson["priority"].get<int>();
-    if (timerJson.contains("lifetime") && timerJson["lifetime"].is_number_integer())
-      timer.lifetime = timerJson["lifetime"].get<int>();
-    if (timerJson.contains("max_recordings") && timerJson["max_recordings"].is_number_integer())
-      timer.maxRecordings = timerJson["max_recordings"].get<int>();
-    if (timerJson.contains("recording_group") && timerJson["recording_group"].is_number_integer())
-      timer.recordingGroup = timerJson["recording_group"].get<int>();
+    PickString(timerJson, "EpgSearchString", "epg_search_string", timer.epgSearchString);
+    PickBool(timerJson, "FullTextEpgSearch", "full_text_epg_search", timer.fullTextEpgSearch);
+    PickInt(timerJson, "EpgUid", "epg_uid", timer.epgUid);
+    PickString(timerJson, "EpgEventId", "epg_event_id", timer.epgEventId);
 
-    if (timerJson.contains("epg_search_string") && timerJson["epg_search_string"].is_string())
-      timer.epgSearchString = timerJson["epg_search_string"].get<std::string>();
-    if (timerJson.contains("full_text_epg_search") && timerJson["full_text_epg_search"].is_boolean())
-      timer.fullTextEpgSearch = timerJson["full_text_epg_search"].get<bool>();
-    if (timerJson.contains("epg_uid") && timerJson["epg_uid"].is_number_integer())
-      timer.epgUid = timerJson["epg_uid"].get<int>();
-    if (timerJson.contains("epg_event_id") && timerJson["epg_event_id"].is_string())
-      timer.epgEventId = timerJson["epg_event_id"].get<std::string>();
+    PickInt(timerJson, "GenreType", "genre_type", timer.genreType);
+    PickInt(timerJson, "GenreSubType", "genre_sub_type", timer.genreSubType);
 
-    if (timerJson.contains("genre_type") && timerJson["genre_type"].is_number_integer())
-      timer.genreType = timerJson["genre_type"].get<int>();
-    if (timerJson.contains("genre_sub_type") && timerJson["genre_sub_type"].is_number_integer())
-      timer.genreSubType = timerJson["genre_sub_type"].get<int>();
-
-    if (timerJson.contains("description") && timerJson["description"].is_string())
-      timer.description = timerJson["description"].get<std::string>();
+    PickString(timerJson, "Description", "description", timer.description);
 
     outTimers.push_back(timer);
   }
@@ -224,7 +264,13 @@ bool TimerManager::MapTimerToKodi(const UltimateTimer& timer, kodi::addon::PVRTi
 
   kodiTimer.SetFullTextEpgSearch(timer.fullTextEpgSearch);
   if (!timer.epgSearchString.empty()) kodiTimer.SetEPGSearchString(timer.epgSearchString);
-  if (timer.epgUid > 0) kodiTimer.SetEPGUid(timer.epgUid);
+  // Kodi links a timer to its EPG tag through iEpgUid == the tag's UniqueBroadcastId,
+  // which is computed locally. The provider's epg_event_id is the stable key, so map
+  // it back to the broadcast id first; the backend's own epg_uid is only a fallback
+  // (it matches for timers created by this addon, not for ones made in ultimate-ui).
+  unsigned int epgUid = EPGManager::GetBroadcastIdForEventId(timer.epgEventId);
+  if (epgUid == 0 && timer.epgUid > 0) epgUid = static_cast<unsigned int>(timer.epgUid);
+  if (epgUid > 0) kodiTimer.SetEPGUid(epgUid);
   if (!timer.directory.empty()) kodiTimer.SetDirectory(timer.directory);
   if (timer.maxRecordings > 0) kodiTimer.SetMaxRecordings(timer.maxRecordings);
   if (timer.recordingGroup > 0) kodiTimer.SetRecordingGroup(timer.recordingGroup);
@@ -288,6 +334,44 @@ PVR_TIMER_STATE TimerManager::MapTimerStateToKodi(int state) {
   }
 }
 
+std::string TimerManager::ResolveEpgEventId(const kodi::addon::PVRTimer& kodiTimer,
+                                            const std::string& storedEventId) {
+  const unsigned int epgUid = kodiTimer.GetEPGUid();
+  if (epgUid > 0) {
+    std::string eventId = EPGManager::GetEpgEventId(epgUid);
+    if (!eventId.empty()) return eventId;
+  }
+  return storedEventId;
+}
+
+nlohmann::json TimerManager::BuildTimerBody(const UltimateTimer& timer,
+                                            const std::string& epgEventId) {
+  nlohmann::json doc = nlohmann::json::object();
+  doc["timer_type_id"] = timer.timerTypeId;
+  doc["title"] = timer.title;
+  doc["client_channel_uid"] = timer.clientChannelUid;
+
+  if (timer.startTime > 0) doc["start_time"] = ToBackendIso(timer.startTime);
+  if (timer.endTime > 0) doc["end_time"] = ToBackendIso(timer.endTime);
+  if (timer.priority > 0) doc["priority"] = timer.priority;
+  if (timer.lifetime > 0) doc["lifetime"] = timer.lifetime;
+  if (timer.marginStart > 0) doc["margin_start"] = timer.marginStart;
+  if (timer.marginEnd > 0) doc["margin_end"] = timer.marginEnd;
+  if (timer.weekdays > 0) doc["weekdays"] = timer.weekdays;
+  if (timer.firstDay > 0) doc["first_day"] = ToBackendIso(timer.firstDay);
+  if (!timer.seriesLink.empty()) doc["series_link"] = timer.seriesLink;
+  if (timer.preventDuplicateEpisodes > 0)
+    doc["prevent_duplicate_episodes"] = timer.preventDuplicateEpisodes;
+  if (!timer.epgSearchString.empty()) doc["epg_search_string"] = timer.epgSearchString;
+  doc["full_text_epg_search"] = timer.fullTextEpgSearch;
+
+  // The provider's event id is what the backend keys EPG-based timers on; epg_uid
+  // (our local broadcast id) is only an extra hint, as in ultimate-ui.
+  if (timer.epgUid > 0) doc["epg_uid"] = timer.epgUid;
+  if (!epgEventId.empty()) doc["epg_event_id"] = epgEventId;
+  return doc;
+}
+
 bool TimerManager::AddTimer(const kodi::addon::PVRTimer& timer,
                             const std::vector<UltimateProvider>& providers,
                             const std::map<int, ChannelLookupInfo>& channelLookup,
@@ -309,35 +393,18 @@ bool TimerManager::AddTimer(const kodi::addon::PVRTimer& timer,
 
   if (provider.empty()) return false;
 
-  nlohmann::json doc = nlohmann::json::object();
-  doc["timer_type_id"] = ultimateTimer.timerTypeId;
-  doc["title"] = ultimateTimer.title;
-  doc["provider"] = provider;
-  doc["client_channel_uid"] = ultimateTimer.clientChannelUid;
-
-  if (ultimateTimer.startTime > 0)
-    doc["start_time"] = Utils::ToISO8601(ultimateTimer.startTime);
-  if (ultimateTimer.endTime > 0)
-    doc["end_time"] = Utils::ToISO8601(ultimateTimer.endTime);
-  if (ultimateTimer.priority > 0) doc["priority"] = ultimateTimer.priority;
-  if (ultimateTimer.lifetime > 0) doc["lifetime"] = ultimateTimer.lifetime;
-  if (ultimateTimer.marginStart > 0) doc["margin_start"] = ultimateTimer.marginStart;
-  if (ultimateTimer.marginEnd > 0) doc["margin_end"] = ultimateTimer.marginEnd;
-  if (ultimateTimer.weekdays > 0) doc["weekdays"] = ultimateTimer.weekdays;
-  if (ultimateTimer.firstDay > 0)
-    doc["first_day"] = Utils::ToISO8601(ultimateTimer.firstDay);
-  if (!ultimateTimer.seriesLink.empty())
-    doc["series_link"] = ultimateTimer.seriesLink;
-  if (ultimateTimer.preventDuplicateEpisodes > 0)
-    doc["prevent_duplicate_episodes"] = ultimateTimer.preventDuplicateEpisodes;
-  if (!ultimateTimer.epgSearchString.empty())
-    doc["epg_search_string"] = ultimateTimer.epgSearchString;
-  doc["full_text_epg_search"] = ultimateTimer.fullTextEpgSearch;
-  if (ultimateTimer.epgUid > 0) {
-    doc["epg_uid"] = ultimateTimer.epgUid;
-    std::string epgEventId = EPGManager::GetEpgEventId(static_cast<unsigned int>(ultimateTimer.epgUid));
-    if (!epgEventId.empty()) doc["epg_event_id"] = epgEventId;
+  const std::string epgEventId = ResolveEpgEventId(timer, "");
+  if (epgEventId.empty() && ultimateTimer.epgUid > 0) {
+    // The EPG tag was not (or no longer) seen with an epg_event_id: the timer is sent
+    // without one and the backend decides whether that is acceptable.
+    kodi::Log(ADDON_LOG_WARNING,
+              "AddTimer '%s' (%s): EPG tag %d has no epg_event_id, creating timer without it",
+              ultimateTimer.title.c_str(), provider.c_str(), ultimateTimer.epgUid);
   }
+
+  nlohmann::json doc = BuildTimerBody(ultimateTimer, epgEventId);
+  doc["provider"] = provider;
+  doc["state"] = "SCHEDULED";  // backend default would be NEW; ultimate-ui sends SCHEDULED
 
   if (!httpPost(buildApiUrl("/api/providers/" + Utils::UrlPathEncode(provider) + "/timers"), doc.dump())) {
     return false;
@@ -347,25 +414,40 @@ bool TimerManager::AddTimer(const kodi::addon::PVRTimer& timer,
   return true;
 }
 
-bool TimerManager::DeleteTimer(int clientIndex, bool forceDelete,
+bool TimerManager::DeleteTimer(const kodi::addon::PVRTimer& timer, bool forceDelete,
                                const std::function<std::string(const std::string&)>& buildApiUrl,
                                const std::function<bool(const std::string&)>& httpDelete,
                                const std::function<void()>& loadTimers) {
+  const int clientIndex = timer.GetClientIndex();
   std::string provider;
-  bool found = false;
+  std::string storedEventId;
 
   {
     std::shared_lock<std::shared_mutex> lock(m_dataMutex);
-    UltimateTimer* ultimateTimer = FindTimer(clientIndex);
-    if (!ultimateTimer) return false;
-    provider = ultimateTimer->provider;
-    found = true;
+    const UltimateTimer* existing = FindTimer(clientIndex);
+    if (!existing) return false;
+    provider = existing->provider;
+    storedEventId = existing->epgEventId;
   }
 
-  if (!found) return false;
+  // The backend's own record of the timer is authoritative for delete; the EPG cache
+  // only fills in when the backend never reported an event id for it.
+  std::string epgEventId = !storedEventId.empty() ? storedEventId : ResolveEpgEventId(timer, "");
 
-  std::string url = buildApiUrl("/api/providers/" + Utils::UrlPathEncode(provider) + "/timers/" + std::to_string(clientIndex));
-  if (forceDelete) url += "?force=true";
+  // DELETE has no body: force and the provider event id travel as query parameters
+  // (same contract as ultimate-ui's DELETE /timers/<client_index>).
+  std::string url = buildApiUrl("/api/providers/" + Utils::UrlPathEncode(provider) + "/timers/" +
+                                std::to_string(clientIndex));
+  char sep = '?';
+  if (forceDelete) {
+    url += sep;
+    url += "force=true";
+    sep = '&';
+  }
+  if (!epgEventId.empty()) {
+    url += sep;
+    url += "epg_event_id=" + Utils::UrlEncode(epgEventId);
+  }
 
   if (!httpDelete(url)) return false;
 
@@ -377,47 +459,27 @@ bool TimerManager::UpdateTimer(const kodi::addon::PVRTimer& timer,
                                const std::function<std::string(const std::string&)>& buildApiUrl,
                                const std::function<bool(const std::string&, const std::string&)>& httpPut,
                                const std::function<void()>& loadTimers) {
-  int clientIndex = timer.GetClientIndex();
-
-  std::shared_lock<std::shared_mutex> lock(m_dataMutex);
-  UltimateTimer* existingTimer = FindTimer(clientIndex);
-  if (!existingTimer) return false;
+  const int clientIndex = timer.GetClientIndex();
 
   UltimateTimer updatedTimer;
-  MapKodiTimerToUltimate(timer, updatedTimer);
-  updatedTimer.provider = existingTimer->provider;
-  lock.unlock();
+  std::string storedEventId;
+  {
+    std::shared_lock<std::shared_mutex> lock(m_dataMutex);
+    const UltimateTimer* existing = FindTimer(clientIndex);
+    if (!existing) return false;
 
-  nlohmann::json doc = nlohmann::json::object();
-  doc["timer_type_id"] = updatedTimer.timerTypeId;
-  doc["title"] = updatedTimer.title;
-  doc["client_channel_uid"] = updatedTimer.clientChannelUid;
-
-  if (updatedTimer.startTime > 0)
-    doc["start_time"] = Utils::ToISO8601(updatedTimer.startTime);
-  if (updatedTimer.endTime > 0)
-    doc["end_time"] = Utils::ToISO8601(updatedTimer.endTime);
-  if (updatedTimer.priority > 0) doc["priority"] = updatedTimer.priority;
-  if (updatedTimer.lifetime > 0) doc["lifetime"] = updatedTimer.lifetime;
-  if (updatedTimer.marginStart > 0) doc["margin_start"] = updatedTimer.marginStart;
-  if (updatedTimer.marginEnd > 0) doc["margin_end"] = updatedTimer.marginEnd;
-  if (updatedTimer.weekdays > 0) doc["weekdays"] = updatedTimer.weekdays;
-  if (updatedTimer.firstDay > 0)
-    doc["first_day"] = Utils::ToISO8601(updatedTimer.firstDay);
-  if (!updatedTimer.seriesLink.empty())
-    doc["series_link"] = updatedTimer.seriesLink;
-  if (updatedTimer.preventDuplicateEpisodes > 0)
-    doc["prevent_duplicate_episodes"] = updatedTimer.preventDuplicateEpisodes;
-  if (!updatedTimer.epgSearchString.empty())
-    doc["epg_search_string"] = updatedTimer.epgSearchString;
-  doc["full_text_epg_search"] = updatedTimer.fullTextEpgSearch;
-  if (updatedTimer.epgUid > 0) {
-    doc["epg_uid"] = updatedTimer.epgUid;
-    std::string epgEventId = EPGManager::GetEpgEventId(static_cast<unsigned int>(updatedTimer.epgUid));
-    if (!epgEventId.empty()) doc["epg_event_id"] = epgEventId;
+    MapKodiTimerToUltimate(timer, updatedTimer);
+    updatedTimer.provider = existing->provider;
+    storedEventId = existing->epgEventId;
   }
 
-  if (!httpPut(buildApiUrl("/api/providers/" + Utils::UrlPathEncode(updatedTimer.provider) + "/timers/" + std::to_string(clientIndex)),
+  // PUT keeps the timer's client_index (path); the body carries the epg_event_id, which
+  // stays the one the timer was created for unless Kodi re-points it at another tag.
+  const std::string epgEventId = ResolveEpgEventId(timer, storedEventId);
+  nlohmann::json doc = BuildTimerBody(updatedTimer, epgEventId);
+
+  if (!httpPut(buildApiUrl("/api/providers/" + Utils::UrlPathEncode(updatedTimer.provider) + "/timers/" +
+                           std::to_string(clientIndex)),
                doc.dump())) {
     return false;
   }
@@ -428,6 +490,13 @@ bool TimerManager::UpdateTimer(const kodi::addon::PVRTimer& timer,
 
 UltimateTimer* TimerManager::FindTimer(int clientIndex) {
   for (auto& timer : m_timers) {
+    if (timer.clientIndex == clientIndex) return &timer;
+  }
+  return nullptr;
+}
+
+const UltimateTimer* TimerManager::FindTimer(int clientIndex) const {
+  for (const auto& timer : m_timers) {
     if (timer.clientIndex == clientIndex) return &timer;
   }
   return nullptr;

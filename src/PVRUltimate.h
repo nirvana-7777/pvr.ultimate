@@ -150,7 +150,10 @@ private:
   bool HttpPost(const std::string& url, const std::string& body);
 
   bool HttpPut(const std::string& url, const std::string& body);
-  std::string HttpSendRequest(const std::string& url, const std::string& method, const std::string& body);
+  // opened (optional): set to true once the request was accepted (HTTP success), even if the
+  // body is empty - lets callers tell "204 No Content" from a failed request.
+  std::string HttpSendRequest(const std::string& url, const std::string& method, const std::string& body,
+                              bool* opened = nullptr);
 
   // Core methods
   bool RetryBackendCall(const std::string& operationName);

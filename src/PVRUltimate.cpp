@@ -387,7 +387,9 @@ std::string CPVRUltimate::BuildApiUrl(const std::string& endpoint) {
   return url.str();
 }
 
-std::string CPVRUltimate::HttpSendRequest(const std::string& url, const std::string& method, const std::string& body) {
+std::string CPVRUltimate::HttpSendRequest(const std::string& url, const std::string& method, const std::string& body,
+                                          bool* opened) {
+  if (opened) *opened = false;
   kodi::Log(ADDON_LOG_DEBUG, "HTTP %s: %s", method.c_str(), Utils::RedactUrl(url).c_str());
 
   std::string apiKey, customHeaders;
@@ -467,6 +469,8 @@ std::string CPVRUltimate::HttpSendRequest(const std::string& url, const std::str
     return "";
   }
 
+  if (opened) *opened = true;
+
   std::string content;
   char buffer[16384]; // Increased from 1024 for better performance
   ssize_t bytesRead;
@@ -500,8 +504,11 @@ std::string CPVRUltimate::HttpGetNoRetry(const std::string& url) {
 }
 
 bool CPVRUltimate::HttpDelete(const std::string& url) {
-  std::string resp = HttpSendRequest(url, "DELETE", "");
-  if (resp.empty()) {
+  // The backend answers a successful DELETE with 204 No Content, i.e. an empty body:
+  // success is "request accepted", not "non-empty response".
+  bool opened = false;
+  HttpSendRequest(url, "DELETE", "", &opened);
+  if (!opened) {
     kodi::Log(ADDON_LOG_ERROR, "HTTP DELETE failed: %s", Utils::RedactUrl(url).c_str());
     return false;
   }
@@ -1177,7 +1184,6 @@ PVR_ERROR CPVRUltimate::AddTimer(const kodi::addon::PVRTimer& timer) {
 
 PVR_ERROR CPVRUltimate::DeleteTimer(const kodi::addon::PVRTimer& timer, bool forceDelete) {
   if (!IsReady()) return PVR_ERROR_SERVER_ERROR;
-  int clientIndex = timer.GetClientIndex();
 
   auto buildApiUrl = [this](const std::string& endpoint) -> std::string {
     return this->BuildApiUrl(endpoint);
@@ -1196,7 +1202,7 @@ PVR_ERROR CPVRUltimate::DeleteTimer(const kodi::addon::PVRTimer& timer, bool for
     m_timerManager->LoadTimers(providers, httpGet, parseJson);
   };
 
-  if (!m_timerManager->DeleteTimer(clientIndex, forceDelete, buildApiUrl, httpDelete, loadTimers)) {
+  if (!m_timerManager->DeleteTimer(timer, forceDelete, buildApiUrl, httpDelete, loadTimers)) {
     return PVR_ERROR_SERVER_ERROR;
   }
 

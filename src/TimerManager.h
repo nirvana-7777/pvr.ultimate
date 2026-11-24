@@ -33,7 +33,9 @@ public:
                        const std::function<bool(const std::string&, const std::string&)>& httpPost,
                        const std::function<void()>& loadTimers);
 
-  bool DeleteTimer(int clientIndex, bool forceDelete,
+  // clientIndex addresses the timer on the backend; the provider's epg_event_id (the
+  // id timers are keyed on, same as in ultimate-ui) travels as query parameter.
+  bool DeleteTimer(const kodi::addon::PVRTimer& timer, bool forceDelete,
                    const std::function<std::string(const std::string&)>& buildApiUrl,
                    const std::function<bool(const std::string&)>& httpDelete,
                    const std::function<void()>& loadTimers);
@@ -44,6 +46,7 @@ public:
                    const std::function<void()>& loadTimers);
 
   UltimateTimer* FindTimer(int clientIndex);
+  const UltimateTimer* FindTimer(int clientIndex) const;
   const std::vector<UltimateTimer>& GetTimers() const { return m_timers; }
   const std::vector<UltimateTimerType>& GetTimerTypes() const { return m_timerTypes; }
 
@@ -62,6 +65,17 @@ private:
                                     const std::function<std::string(const std::string&)>& httpGet,
                                     const std::function<bool(const std::string&, nlohmann::json&)>& parseJson,
                                     std::vector<UltimateTimer>& outTimers);
+
+  // epg_event_id for a timer: the id of the EPG tag the Kodi timer points at (iEpgUid,
+  // resolved through EPGManager's cache) wins; storedEventId (what the backend already
+  // holds for an existing timer) is the fallback, so update/delete keep working after
+  // the cache was cleared or the EPG window moved on. Empty = no event id known.
+  static std::string ResolveEpgEventId(const kodi::addon::PVRTimer& kodiTimer,
+                                       const std::string& storedEventId);
+
+  // Request body for create (POST) and update (PUT). Mirrors ultimate-ui's
+  // buildTimerBody; epg_event_id is only included when non-empty.
+  static nlohmann::json BuildTimerBody(const UltimateTimer& timer, const std::string& epgEventId);
 
   static bool MapTimerToKodi(const UltimateTimer& timer, kodi::addon::PVRTimer& kodiTimer);
 

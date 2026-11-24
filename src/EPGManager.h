@@ -69,6 +69,12 @@ public:
     // callers must treat that as "no listing guid available", not an error.
     static std::string GetEpgEventId(unsigned int broadcastId);
 
+    // Reverse of GetEpgEventId: the locally-computed UniqueBroadcastId for a provider
+    // listing guid, or 0 if that event has not been seen in this session. Used to give
+    // timers that came from the backend (e.g. created in ultimate-ui, where epg_uid is
+    // not our broadcast id) an iEpgUid Kodi can link to the EPG tag.
+    static unsigned int GetBroadcastIdForEventId(const std::string& eventId);
+
 private:
     // Shared parsing logic - single source of truth for EPG JSON -> PVREPGTag mapping.
     static bool ParseEPGResponse(const std::string& response,
@@ -88,6 +94,8 @@ private:
     // entries just means GetEpgEventId returns "" for a broadcast that was
     // only seen a long time ago, which callers already have to handle.
     static std::map<unsigned int, std::string> s_epgEventIdCache;
+    // epg_event_id -> broadcastId (reverse of the above, same lock, same cap).
+    static std::map<std::string, unsigned int> s_broadcastIdByEventId;
     static std::shared_mutex s_epgEventIdCacheMutex;
     static constexpr size_t kMaxCacheEntries = 200000;
 };
