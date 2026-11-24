@@ -49,8 +49,8 @@ bool ChannelManager::LoadChannels(const std::vector<UltimateProvider>& providers
     for (const auto& oldChannel : m_channels) {
       if (std::find(failed.begin(), failed.end(), oldChannel.provider) == failed.end()) continue;
       newChannels.push_back(oldChannel);
-      auto it = m_channelLookup.find(oldChannel.channelNumber);
-      if (it != m_channelLookup.end()) newLookup[oldChannel.channelNumber] = it->second;
+      auto it = m_channelLookup.find(oldChannel.uid);
+      if (it != m_channelLookup.end()) newLookup[oldChannel.uid] = it->second;
     }
   }
 
@@ -58,11 +58,20 @@ bool ChannelManager::LoadChannels(const std::vector<UltimateProvider>& providers
   m_channelLookup = std::move(newLookup);
   m_channelIndex.clear();
   for (size_t i = 0; i < m_channels.size(); ++i) {
-    m_channelIndex[m_channels[i].channelNumber] = i;
+    m_channelIndex[m_channels[i].uid] = i;
   }
 
   if (failedProviders) *failedProviders = std::move(failed);  // NEW
   return !m_channels.empty();
+}
+
+int ChannelManager::ComputeChannelUid(int providerOffset, int legacyUid, int uniqueChannelNumber) {
+  // iUniqueId is persisted by Kodi (channel settings, favourites, timers, recordings).
+  // Do NOT change this scheme once shipped.
+  if (uniqueChannelNumber > 0 && uniqueChannelNumber < PROVIDER_OFFSET_MULTIPLIER) {
+    return providerOffset + uniqueChannelNumber;
+  }
+  return legacyUid;  // backend without UniqueChannelNumber: unchanged behaviour
 }
 
 bool ChannelManager::LoadChannelsForProvider(const std::string& provider, int providerUniqueId, int providerIndex,
@@ -106,6 +115,10 @@ bool ChannelManager::LoadChannelsForProvider(const std::string& provider, int pr
     nextFallbackNumber = maxExplicitNumber + 1;
   }
 
+  // uids already handed out for this provider (guards against duplicate numbers from a backend)
+  std::set<int> usedUids;
+  std::vector<std::pair<size_t, ChannelLookupInfo>> duplicates;  // index into outChannels
+
   // Second pass: build channel objects
   for (const auto& channelJson : channelsArray) {
     UltimateChannel channel;
@@ -129,6 +142,12 @@ bool ChannelManager::LoadChannelsForProvider(const std::string& provider, int pr
     }
 
     channel.uniqueId = provider + ":" + channel.channelId;
+
+    const int uniqueChannelNumber =
+        (channelJson.contains("UniqueChannelNumber") && channelJson["UniqueChannelNumber"].is_number_integer())
+            ? channelJson["UniqueChannelNumber"].get<int>() : 0;
+    channel.uid = ComputeChannelUid(providerOffset, channel.channelNumber, uniqueChannelNumber);
+    const bool duplicateUid = !usedUids.insert(channel.uid).second;
     channel.mode = (channelJson.contains("Mode") && channelJson["Mode"].is_string())
                    ? channelJson["Mode"].get<std::string>() : "live";
     channel.sessionManifest = (channelJson.contains("SessionManifest") && channelJson["SessionManifest"].is_boolean())
@@ -168,8 +187,26 @@ bool ChannelManager::LoadChannelsForProvider(const std::string& provider, int pr
     lookupInfo.catchupHours = (channelJson.contains("CatchupHours") && channelJson["CatchupHours"].is_number_integer())
                               ? channelJson["CatchupHours"].get<int>() : 0;
 
-    outLookup[channel.channelNumber] = lookupInfo;
+    if (duplicateUid) {
+      // Should not happen. A silent collision would make two channels share one Kodi uid
+      // (wrong manifest/licence), so such channels get a fresh uid above everything else
+      // after the loop; that way no other channel's uid is shifted.
+      kodi::Log(ADDON_LOG_WARNING, "Duplicate channel uid %d from %s (channel '%s')",
+                channel.uid, provider.c_str(), channel.channelName.c_str());
+      duplicates.push_back({outChannels.size(), lookupInfo});
+    } else {
+      outLookup[channel.uid] = lookupInfo;
+    }
     outChannels.push_back(channel);
+  }
+
+  if (!duplicates.empty()) {
+    int nextUid = *usedUids.rbegin();
+    for (auto& [index, info] : duplicates) {
+      do { ++nextUid; } while (!usedUids.insert(nextUid).second);
+      outChannels[index].uid = nextUid;
+      outLookup[nextUid] = info;
+    }
   }
   return true;  // CHANGED
 }
@@ -184,7 +221,7 @@ bool ChannelManager::GetChannels(bool radio, kodi::addon::PVRChannelsResultSet& 
   for (const auto& channel : m_channels) {
     if (channel.isRadio == radio) {
       kodi::addon::PVRChannel kodiChannel;
-      kodiChannel.SetUniqueId(channel.channelNumber);
+      kodiChannel.SetUniqueId(channel.uid);
       kodiChannel.SetIsRadio(channel.isRadio);
       kodiChannel.SetChannelNumber(channel.channelNumber);
       kodiChannel.SetChannelName(channel.channelName);

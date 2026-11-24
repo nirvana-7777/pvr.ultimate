@@ -35,6 +35,11 @@ public:
     void UnlockUnique() const { m_dataMutex.unlock(); }
 
 private:
+    // Derives the Kodi iUniqueId of a channel. Backends that send UniqueChannelNumber get
+    // providerOffset + that number; all others keep the legacy value (the display number
+    // with provider offset). Result is unique within the provider's block.
+    static int ComputeChannelUid(int providerOffset, int legacyUid, int uniqueChannelNumber);
+
     static bool LoadChannelsForProvider(const std::string& provider, int providerUniqueId, int providerIndex,
                                         const std::function<std::string(const std::string&)>& httpGet,
                                         const std::function<bool(const std::string&, nlohmann::json&)>& parseJson,
@@ -42,7 +47,7 @@ private:
                                         std::map<int, ChannelLookupInfo>& outLookup);
 
     std::vector<UltimateChannel> m_channels;
-    std::map<int, ChannelLookupInfo> m_channelLookup;
-    std::unordered_map<int, size_t> m_channelIndex;  // channelNumber -> index into m_channels, O(1) GetChannelByUid
+    std::map<int, ChannelLookupInfo> m_channelLookup;  // keyed by channel uid
+    std::unordered_map<int, size_t> m_channelIndex;  // channel uid -> index into m_channels, O(1) GetChannelByUid
     mutable std::shared_mutex m_dataMutex;
 };

@@ -16,7 +16,8 @@ struct UltimateProvider {
 
 struct UltimateChannel {
   std::string uniqueId;
-  int channelNumber = 0;
+  int channelNumber = 0;      // display number (+ provider offset); SD/HD may share it
+  int uid = 0;                // Kodi iUniqueId; unique per channel variant, see ChannelManager::ComputeChannelUid
   std::string channelName;
   std::string iconPath;
   std::string provider;
