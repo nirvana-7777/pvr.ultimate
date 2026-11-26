@@ -6,6 +6,7 @@
 #include <map>
 #include <unordered_map>
 #include <shared_mutex>
+#include <atomic>
 #include <functional>
 #include <string>
 #include <nlohmann/json.hpp>
@@ -20,6 +21,8 @@ public:
                       const std::function<std::string(const std::string&)>& httpGet,
                       const std::function<bool(const std::string&, nlohmann::json&)>& parseJson,
                       std::vector<std::string>* failedProviders = nullptr);
+
+    void SetPreferHigherResolution(bool prefer) { m_preferHigherResolution = prefer; }
 
     int GetChannelsAmount() const;
     bool GetChannels(bool radio, kodi::addon::PVRChannelsResultSet& results) const;
@@ -46,8 +49,11 @@ private:
                                         std::vector<UltimateChannel>& outChannels,
                                         std::map<int, ChannelLookupInfo>& outLookup);
 
+    void HideQualityVariants();
+
     std::vector<UltimateChannel> m_channels;
     std::map<int, ChannelLookupInfo> m_channelLookup;  // keyed by channel uid
     std::unordered_map<int, size_t> m_channelIndex;  // channel uid -> index into m_channels, O(1) GetChannelByUid
     mutable std::shared_mutex m_dataMutex;
+    std::atomic<bool> m_preferHigherResolution{true};
 };
