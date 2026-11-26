@@ -205,3 +205,15 @@ msgstr "Alle Provider sind aktiv. Die Auswahl lässt sich später in den Addon-E
 msgctxt "#30928"
 msgid "Ultimate PVR - choose your providers"
 msgstr "Ultimate PVR - Provider auswählen"
+
+msgctxt "#30929"
+msgid "Channels"
+msgstr "Sender"
+
+msgctxt "#30930"
+msgid "Prefer higher resolution"
+msgstr "Höhere Auflösung bevorzugen"
+
+msgctxt "#30931"
+msgid "If a channel is available in several resolutions (SD, HD, UHD), the other ones are hidden. They can be shown again in Kodi's channel manager."
+msgstr "Gibt es einen Sender in mehreren Auflösungen (SD, HD, UHD), werden die anderen ausgeblendet. Im Kanalmanager von Kodi lassen sie sich wieder einblenden."

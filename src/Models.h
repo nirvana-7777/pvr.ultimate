@@ -24,6 +24,8 @@ struct UltimateChannel {
   int providerUniqueId = 0;
   std::string channelId;
   bool isRadio = false;
+  std::string quality;
+  bool isHidden = false;
 
   std::string mode;
   bool sessionManifest = false;

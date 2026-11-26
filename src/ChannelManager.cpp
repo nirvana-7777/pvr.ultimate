@@ -56,6 +56,7 @@ bool ChannelManager::LoadChannels(const std::vector<UltimateProvider>& providers
 
   m_channels = std::move(newChannels);
   m_channelLookup = std::move(newLookup);
+  HideQualityVariants();
   m_channelIndex.clear();
   for (size_t i = 0; i < m_channels.size(); ++i) {
     m_channelIndex[m_channels[i].uid] = i;
@@ -168,6 +169,8 @@ bool ChannelManager::LoadChannelsForProvider(const std::string& provider, int pr
                        ? channelJson["Language"].get<std::string>() : "en";
     channel.streamingFormat = (channelJson.contains("StreamingFormat") && channelJson["StreamingFormat"].is_string())
                               ? channelJson["StreamingFormat"].get<std::string>() : "";
+    channel.quality = (channelJson.contains("Quality") && channelJson["Quality"].is_string())
+                      ? channelJson["Quality"].get<std::string>() : "";
 
     // "ChannelType" is the field the backend actually sends for this purpose
     // (RecordingManager reads the same field from its own "channels" data).
@@ -211,6 +214,33 @@ bool ChannelManager::LoadChannelsForProvider(const std::string& provider, int pr
   return true;  // CHANGED
 }
 
+void ChannelManager::HideQualityVariants() {
+  auto rank = [](const std::string& quality) {
+    if (quality == "SD") return 1;
+    if (quality == "HD") return 2;
+    if (quality == "UHD" || quality == "4K") return 3;
+    return 0;
+  };
+  const bool preferHigher = m_preferHigherResolution.load();
+  std::map<int, size_t> preferred;  // channel number -> index into m_channels
+  for (size_t i = 0; i < m_channels.size(); ++i) {
+    m_channels[i].isHidden = false;
+    auto it = preferred.find(m_channels[i].channelNumber);
+    if (it == preferred.end()) {
+      preferred.emplace(m_channels[i].channelNumber, i);
+      continue;
+    }
+    const int candidate = rank(m_channels[i].quality);
+    const int current = rank(m_channels[it->second].quality);
+    if (preferHigher ? candidate > current : candidate < current) {
+      m_channels[it->second].isHidden = true;
+      it->second = i;
+    } else {
+      m_channels[i].isHidden = true;
+    }
+  }
+}
+
 int ChannelManager::GetChannelsAmount() const {
   std::shared_lock<std::shared_mutex> lock(m_dataMutex);
   return static_cast<int>(m_channels.size());
@@ -226,6 +256,7 @@ bool ChannelManager::GetChannels(bool radio, kodi::addon::PVRChannelsResultSet& 
       kodiChannel.SetChannelNumber(channel.channelNumber);
       kodiChannel.SetChannelName(channel.channelName);
       kodiChannel.SetIconPath(channel.iconPath);
+      kodiChannel.SetIsHidden(channel.isHidden);
       kodiChannel.SetClientProviderUid(channel.providerUniqueId);
       results.Add(kodiChannel);
     }

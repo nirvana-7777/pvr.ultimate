@@ -205,3 +205,15 @@ msgstr ""
 msgctxt "#30928"
 msgid "Ultimate PVR - choose your providers"
 msgstr ""
+
+msgctxt "#30929"
+msgid "Channels"
+msgstr ""
+
+msgctxt "#30930"
+msgid "Prefer higher resolution"
+msgstr ""
+
+msgctxt "#30931"
+msgid "If a channel is available in several resolutions (SD, HD, UHD), the other ones are hidden. They can be shown again in Kodi's channel manager."
+msgstr ""

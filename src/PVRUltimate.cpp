@@ -32,6 +32,7 @@ CPVRUltimate::CPVRUltimate()
     m_providerManager->LoadLocalSelection(kodi::addon::GetUserPath("provider_selection.json"));
   }
   m_channelManager = std::make_unique<ChannelManager>();
+  m_channelManager->SetPreferHigherResolution(kodi::addon::GetSettingBoolean("prefer_higher_resolution", true));
   m_epgManager = std::make_unique<EPGManager>();
   m_recordingManager = std::make_unique<RecordingManager>();
   m_timerManager = std::make_unique<TimerManager>();
@@ -354,6 +355,11 @@ ADDON_STATUS CPVRUltimate::SetSetting(const std::string& settingName,
     std::lock_guard<std::mutex> lock(m_configMutex);
     m_customHeaders = settingValue.GetString();
     kodi::Log(ADDON_LOG_INFO, "Custom headers changed");
+    return ADDON_STATUS_NEED_RESTART;
+  }
+  else if (settingName == "prefer_higher_resolution") {
+    m_channelManager->SetPreferHigherResolution(settingValue.GetBoolean());
+    kodi::Log(ADDON_LOG_INFO, "Prefer higher resolution changed to: %s", settingValue.GetBoolean() ? "true" : "false");
     return ADDON_STATUS_NEED_RESTART;
   }
   else if (settingName == "provider_selection") {
